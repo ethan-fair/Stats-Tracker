@@ -53,7 +53,7 @@ while True:
             break
         else:
             print("Session id is invalid.")
-    except socket.timeout or ConnectionResetError:
+    except (socket.timeout, ConnectionResetError):
         print("Error connecting to server.")
         input("Press \033[32menter\033[0m to continue.")
         running = False
@@ -289,9 +289,13 @@ class SeatTracker():
                 self.highlighted[i][1] -= 1
             else:
                 remove.append(i)
-        for i in self.highlighted:
-            if self.highlighted.index(i) in remove:
-                self.highlighted.pop(self.highlighted.index(i))
+        while True:
+            for i in self.highlighted:
+                if self.highlighted.index(i) in remove:
+                    self.highlighted.pop(self.highlighted.index(i))
+                    break
+            if remove == []:
+                break
 
         for i in range(self.number):
             if self.name_list[i] not in highlighted_list:

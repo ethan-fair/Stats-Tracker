@@ -5,8 +5,29 @@ import socket
 import configparser
 import sys
 import datetime
+import atexit
+import signal
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+def close():
+    global changes_to_send
+    if changes_to_send:
+        writeToDatabase()
+    if changes_to_send:
+        print(changes_to_send)
+        with open("changes.json", "w") as f:
+            json.dump(changes_to_send, f)
+
+def handle_exit_signals(signum, frame):
+    sys.exit(0)
+
+atexit.register(close)
+
+if hasattr(signal, 'SIGHUP'):
+    signal.signal(signal.SIGHUP, handle_exit_signals)
+signal.signal(signal.SIGTERM, handle_exit_signals)
+signal.signal(signal.SIGINT, handle_exit_signals)
 
 scriptRunning = True
 
@@ -29,16 +50,17 @@ except:
 
 
 #Declaration of colors
-if use_rich_text == "True":
-    RED = "\033[31m"
-    GREEN = "\033[32m"
-    BLUE = "\033[1;34m"
-    RESET = "\033[0m"
-else:
-    RED = ""
-    GREEN = ""
-    BLUE = ""
-    RESET = ""
+if scriptRunning:
+    if use_rich_text == "True":
+        RED = "\033[31m"
+        GREEN = "\033[32m"
+        BLUE = "\033[1;34m"
+        RESET = "\033[0m"
+    else:
+        RED = ""
+        GREEN = ""
+        BLUE = ""
+        RESET = ""
 
 def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
     global changes_to_send
@@ -172,6 +194,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                             playerId = teamB[int(player[:1]) - 1]
                         except:
                             invalid_input = True
+                    else:
+                        invalid_input = True
                 else:
                     if player in teamA or player in teamB:
                         playerId = player
@@ -280,6 +304,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                                 return_with_neg_error = True
                         except:
                             invalid_input = True
+                    else:
+                        invalid_input = True
                     if not invalid_input:
                         if input(f"{GREEN}Confirm{RESET} that the player is " + full_name_list[playerId] + " (y or n): ").lower() != "y":
                             continue
@@ -443,6 +469,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                     playerId = teamB[int(player[:1]) - 1]
                 except:
                     invalid_input = True
+            else:
+                invalid_input = True
         else:
             if player in teamA or player in teamB:
                 playerId = player
@@ -628,7 +656,10 @@ def writeToDatabase():
         data = changes_to_send.pop(0)
         request_counter += 1
         msg = sendMessage("WRROW" + json.dumps({"id": request_counter, "game_id": game_id_num, "data": data}), repeat=1)
-        if msg == "TIMEOUT" or msg == "SVRCLS" or msg == "error":
+        if msg == "TIMEOUT" or msg == "SVRCLS":
+            reappend.append(data)
+            break
+        elif msg == "error":
             reappend.append(data)
     for i in reappend:
         changes_to_send.append(i)
@@ -655,13 +686,14 @@ changes_to_send = []
 if os.path.exists("changes.json"):
     with open("changes.json") as f:
         changes_to_send = json.load(f)
+        writeToDatabase()
     os.remove("changes.json")
 fieldnames = ["username", "first_name", "last_name", "tuh", "powers", "tens", "negs", "lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash", "lightning"]
 
 try:
     if scriptRunning:
         data = sendMessage("PLNME")
-        if data == "SVRCLS":
+        if data == "SVRCLS" or data == "TIMEOUT":
             print(f"Server is closed. {GREEN}Launch{RESET} the server and try again or {GREEN}change{RESET} the IP.")
             scriptRunning = False
             input("Press enter to continue.")
@@ -858,7 +890,12 @@ try:
         sendMessage("CLOSE" + str(game_id_num), repeat=1)
     except:
         pass
-#except Exception as e:
-except socket.timeout:
+except Exception as e:
     #print(e)
-    sendMessage("CLOSE" + str(game_id_num), repeat=1)
+    if changes_to_send:
+        writeToDatabase()
+    if changes_to_send:
+        with open("changes.json", "w") as f:
+            json.dump(changes_to_send, f)
+    if sendMessage("CLOSE" + str(game_id_num), repeat=1) != "pass":
+        input("The connection to the server has failed.\nPress enter to continue.")

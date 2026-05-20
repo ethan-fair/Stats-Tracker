@@ -128,7 +128,7 @@ while True:
                 to_pop = index
         if to_pop is not None:
             item = game_list.pop(to_pop)
-            num_list.remove(data)
+            num_list.remove(int(data))
             for i in item["scoreboards"]:
                 server_socket.sendto(b"CLOSED", i)
             server_socket.sendto(b"pass", addr)
@@ -208,8 +208,36 @@ while True:
         conn = sqlite3.connect("players.db")
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM players")
-        result = cursor.fetchall()
+        try:
+            cursor.execute("SELECT * FROM players")
+            result = cursor.fetchall()
+        except:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS players (
+                    username TEXT PRIMARY KEY,
+                    first_name TEXT NOT NULL,
+                    last_name TEXT NOT NULL,
+                    tuh INTEGER DEFAULT 0,
+                    powers INTEGER DEFAULT 0,
+                    tens INTEGER DEFAULT 0,
+                    negs INTEGER DEFAULT 0,
+                    lit TEXT NOT NULL,
+                    history TEXT NOT NULL,
+                    science TEXT NOT NULL,
+                    fine_arts TEXT NOT NULL,
+                    geography TEXT NOT NULL,
+                    current_events TEXT NOT NULL,
+                    rmpss TEXT NOT NULL,
+                    trash TEXT NOT NULL,
+                    lightning TEXT NOT NULL,
+                    bonus_ans INTEGER DEFAULT 0,
+                    bonus_heard INTEGER DEFAULT 0
+                )
+            """)
+            conn.commit()
+
+            cursor.execute("SELECT * FROM players")
+            result = cursor.fetchall()
         
         rows = [dict(row) for row in result]
 
@@ -455,6 +483,7 @@ while True:
         req_id = payload["id"]
 
         if payload["game_id"] not in num_list:
+            server_socket.sendto("error".encode(), addr)
             continue
         
         if req_id in processed_ids[payload["game_id"]]:
