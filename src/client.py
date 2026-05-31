@@ -86,7 +86,9 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
     global changes_to_send
     score = {"a": 0, "b": 0}
     tossup = 0
-    game_date_time = datetime.datetime.now().strftime("%b %d, %Y, %I:%M:%S.%f %p")
+    game_date_time = sendMessage("PLTME")
+    if game_date_time == "SVRCLS" or game_date_time == "TIMEOUT":
+        game_date_time = datetime.datetime.now().strftime("%b %d, %Y, %I:%M:%S.%f %p")
     do_name = False
     while True:
         packet = input(f"Enter {GREEN}packet name{RESET} for tossups (ex: {GREEN}IS #226A P1{RESET}) or use a session name (name): ").lower()
@@ -680,8 +682,6 @@ def databaseWriter():
     length = len(changes_to_send)
     for i in range(length):
         change = changes_to_send.pop(0)
-        # Reuse the change's stable id on every send (including retries) so
-        # the server can dedup and never double-count a dropped ACK.
         msg = sendMessage("WRROW" + json.dumps({"id": change["id"], "game_id": game_id_num, "data": change["data"]}), repeat=1)
         if msg == "TIMEOUT" or msg == "SVRCLS":
             reappend.append(change)
@@ -743,13 +743,10 @@ try:
         migrated = []
         for item in loaded:
             if isinstance(item, dict) and "id" in item and "data" in item:
-                # Already in the id-stamped format.
                 migrated.append(item)
             else:
-                # Old format (a raw data list): give it a fresh id.
                 change_id_counter += 1
                 migrated.append({"id": change_id_counter, "data": item})
-        # Ensure ids generated during this run can't collide with reloaded ones.
         for item in migrated:
             if isinstance(item.get("id"), int) and item["id"] > change_id_counter:
                 change_id_counter = item["id"]
@@ -888,7 +885,6 @@ try:
     except:
         pass
 except OSError:
-    # Network-level failure (socket errors, timeouts, connection reset).
     close()
     try:
         if sendMessage("CLOSE" + str(game_id_num), repeat=1) != "pass":
@@ -896,8 +892,6 @@ except OSError:
     except:
         input("The connection to the server has failed.\nPress enter to continue.")
 except Exception as e:
-    # Not a network problem -- surface the real error rather than blaming the
-    # connection, so the actual bug can be diagnosed.
     close()
     try:
         sendMessage("CLOSE" + str(game_id_num), repeat=1)

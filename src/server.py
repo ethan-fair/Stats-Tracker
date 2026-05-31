@@ -60,6 +60,8 @@ while True:
         pass
     if code == "PROBE":
         server_socket.sendto(b"pass", addr)
+    elif code == "PLTME":
+        server_socket.sendto(datetime.datetime.now().strftime("%b %d, %Y, %I:%M:%S.%f %p").encode(), addr)
     elif code == "PLNME":
         conn = sqlite3.connect("players.db")
         conn.row_factory = sqlite3.Row
