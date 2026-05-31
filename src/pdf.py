@@ -132,18 +132,21 @@ def _fig_to_image(fig, width):
 def _running_score_chart(rounds, width):
     """Line chart: running totals for both teams across rounds."""
     fig, ax = plt.subplots(figsize=(7.2, 2.6))
-    xs = [r["tu"] for r in rounds]
-    a = [r["a_total"] for r in rounds]
-    b = [r["b_total"] for r in rounds]
-    ax.plot(xs, a, color="#1F6FEB", lw=2, label=rounds[0].get("a_name", "A"))
-    ax.plot(xs, b, color="#C62828", lw=2, label=rounds[0].get("b_name", "B"))
+    xs = [r for r in rounds]
+    a = [rounds[r]["a"] for r in rounds]
+    b = [rounds[r]["b"] for r in rounds]
+    ax.vlines(xs, [min(ai, bi) for ai, bi in zip(a, b)],
+              [max(ai, bi) for ai, bi in zip(a, b)],
+              color="#9E9E9E", lw=0.6, alpha=0.6, zorder=1)
+    ax.plot(xs, a, color="#1F6FEB", lw=2, label="Team A", zorder=2)
+    ax.plot(xs, b, color="#C62828", lw=2, label="Team B", zorder=2)
     ax.fill_between(xs, a, b, where=[ai >= bi for ai, bi in zip(a, b)],
                     color="#1F6FEB", alpha=0.06, interpolate=True)
     ax.fill_between(xs, a, b, where=[ai < bi for ai, bi in zip(a, b)],
                     color="#C62828", alpha=0.06, interpolate=True)
     ax.set_xlabel("Tossup", fontsize=8, color="#6B6B6B")
     ax.set_ylabel("Running Score", fontsize=8, color="#6B6B6B")
-    ax.set_xticks(range(0, max(xs) + 1, 5))
+    ax.set_xticks(range(0, max(xs) + 1))
     ax.grid(True, axis="y", lw=0.4, color="#E5E5E5")
     for sp in ("top", "right"): ax.spines[sp].set_visible(False)
     ax.spines["left"].set_color("#D9D9D9"); ax.spines["bottom"].set_color("#D9D9D9")
@@ -256,7 +259,6 @@ def _player_table(team, styles, width):
             players[data[0]] = [[data[1], data[2]]]
     categories = ["lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash"]
     max_tuh = 0
-    print(players)
     for p in players:
         point_distr = {
             "powers": sum([players[p][index][1][0] if players[p][index][0] in categories else 0 for index in range(len(players[p]))]),
@@ -274,7 +276,6 @@ def _player_table(team, styles, width):
             "negs": sum([players[p][index][1][2] if players[p][index][0] in categories else 0 for index in range(len(players[p]))]),
             "tuh": sum([players[p][index][1][3] if players[p][index][0] in categories else 0 for index in range(len(players[p]))])  
         }
-        print(p + "\n\n" + str(point_distr)) 
         segs = [(point_distr["powers"], POWER), (point_distr["tens"], GET),
                 (point_distr["negs"], NEG), (max_tuh - (point_distr["powers"] + point_distr["tens"] + point_distr["negs"]), NEUTRAL)]
         name = Paragraph(
@@ -354,12 +355,11 @@ def generate_match_report(date, out_path = None):
     rows = [dict(row) for row in result]
     cursor.close()
 
-    print(rows)
-
     conn.commit()
     conn.close()
 
     game_data = []
+    round_data = {0: {"a": 0, "b": 0}}
     teamA = []
     teamB = []
 
@@ -369,8 +369,29 @@ def generate_match_report(date, out_path = None):
             game_data = rows[i]["data"]
             break
 
+    game_data["player_data"].sort(key = lambda x: x["question_num"])
+
+    categories = ["lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash"]
+
+    for i in game_data["player_data"]:
+        if not i["question_num"] in round_data.keys():
+            round_data[i["question_num"]] = {"a": round_data[i["question_num"] - 1]["a"] if i["question_num"] - 1 in round_data.keys() else 0, "b": round_data[i["question_num"] - 1]["b"] if i["question_num"] - 1 in round_data.keys() else 0}
+        team = i["team"]
+        if i["question_data"][1] in categories:
+            round_data[i["question_num"]][team] += 15 * i["question_data"][2][0]
+            round_data[i["question_num"]][team] += 10 * i["question_data"][2][1]
+            round_data[i["question_num"]][team] -= 5 * i["question_data"][2][2]
+        if i["question_data"][1] == "bonus_ans":
+            round_data[i["question_num"]][team] += 10
+        if i["question_data"][1] == "lightning":
+            round_data[i["question_num"]][team] += 10 * i["question_data"][2][0]
+            round_data[i["question_num"]][team] -= 10 * i["question_data"][2][1]
+    
+
+    if not game_data:
+        return None
+
     for data in game_data["player_data"]:
-        print(data)
         if data["team"] == "a":
             teamA.append([data["question_data"][0], data["question_data"][1], data["question_data"][2]])
         elif data["team"] == "b":
@@ -386,11 +407,12 @@ def generate_match_report(date, out_path = None):
     story += _header_block(game_data["packet"], date, styles, W)
 
     # player stats
-    story.append(Paragraph("§ 01 &nbsp; Player lines", styles["h2"]))
-    story.append(Spacer(1, 8))
+    #story.append(Paragraph("§ 01 &nbsp; Player lines", styles["h2"]))
+    #story.append(Spacer(1, 8))
     story += _team_block(teamA, styles, W)
     #story.append(HLine(W)); story.append(Spacer(1, 8))
     story += _team_block(teamB, styles, W)
+    story.append(_running_score_chart(round_data, W))
 
     doc.build(story)
     buf.seek(0)
@@ -595,13 +617,14 @@ def generate_player_report(player, games, out_path = None):
 
     # stat tiles
     tiles = [
-        _stat_tile("POWERS", str(point_distr["powers"]), styles, W / 5),
-        _stat_tile("TENS", str(point_distr["tens"]), styles, W / 5),
-        _stat_tile("NEGS", str(point_distr["negs"]), styles, W / 5),
-        _stat_tile("TOTAL POINTS", str(point_distr["powers"] * 15 + point_distr["tens"] * 10 + -5 * point_distr["negs"]), styles, W / 5),
-        _stat_tile("PP20TUH", f"{((point_distr["powers"] * 15 + point_distr["tens"] * 10 + -5 * point_distr["negs"]) / point_distr["tuh"] * 20):.1f}", styles, W / 5),
+        _stat_tile("POWERS", str(point_distr["powers"]), styles, W / 6),
+        _stat_tile("TENS", str(point_distr["tens"]), styles, W / 6),
+        _stat_tile("NEGS", str(point_distr["negs"]), styles, W / 6),
+        _stat_tile("TOSSUPS HEARD", str(point_distr["tuh"]), styles, W / 6),
+        _stat_tile("TOTAL POINTS", str(point_distr["powers"] * 15 + point_distr["tens"] * 10 + -5 * point_distr["negs"]), styles, W / 6),
+        _stat_tile("PP20TUH", f"{((point_distr["powers"] * 15 + point_distr["tens"] * 10 + -5 * point_distr["negs"]) / (point_distr["tuh"] if point_distr["tuh"] > 0 else 1) * 20):.1f}", styles, W / 6),
     ]
-    tile_row = Table([tiles], colWidths=[W / 5] * 5)
+    tile_row = Table([tiles], colWidths=[W / 6] * 6)
     tile_row.setStyle(TableStyle([
         ("LEFTPADDING", (0, 0), (-1, -1), 3),
         ("RIGHTPADDING", (0, 0), (-1, -1), 3),

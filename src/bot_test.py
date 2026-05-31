@@ -22,11 +22,7 @@ Setup:
 import discord
 from discord import app_commands
 from discord.ui import View, Select, Modal, TextInput
-import io
 import datetime
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
 import sqlite3
 import pdf
 import json
@@ -38,7 +34,22 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 # CONFIGURATION  ← edit these
 # ──────────────────────────────────────────────────────────────
 
-BOT_TOKEN = "MTQ5MzcyMTA0MDc5MzIzOTc5Mw.GKSaxc.8AgRAvIaoQD-nGWi4zwPeKM-Eit1Me7uuUjjo4"
+def load_env():
+    if not os.path.exists(".env"):
+        return
+
+    with open(".env", "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            key, val = line.split("=", 1)
+            os.environ[key.strip()] = val.strip()
+
+load_env()
+
+BOT_TOKEN = os.getenv("KEY")
 
 def get_dates():
     conn = sqlite3.connect("players.db")
@@ -108,61 +119,6 @@ def parse_date(text: str) -> datetime.date:
             f"**{text}** is not a valid date. "
             "Please use the format `MM-DD-YYYY` (e.g. `04-25-2024`)."
         )
-
-
-# ──────────────────────────────────────────────────────────────
-# PDF GENERATION
-# ──────────────────────────────────────────────────────────────
-
-def generate_pdf(username: str, report_type: str, date_info: str) -> io.BytesIO:
-    """
-    Build and return a PDF as an in-memory byte stream.
-
-    ┌─────────────────────────────────────────────────────┐
-    │  ADD YOUR CUSTOM REPORT-BUILDING CODE IN THIS       │
-    │  FUNCTION. Replace the placeholder paragraphs with  │
-    │  your actual data, charts, tables, etc.             │
-    └─────────────────────────────────────────────────────┘
-    """
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    styles = getSampleStyleSheet()
-    story = []
-
-    # ── Title ──────────────────────────────────────────────────
-    story.append(Paragraph(f"Stats Report for {username}", styles["Title"]))
-    story.append(Spacer(1, 12))
-
-    # ── Report metadata ────────────────────────────────────────
-    story.append(Paragraph(f"<b>Report Type:</b> {report_type}", styles["Normal"]))
-    story.append(Paragraph(f"<b>Period:</b> {date_info}", styles["Normal"]))
-    story.append(Paragraph(
-        f"<b>Generated:</b> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        styles["Normal"],
-    ))
-    story.append(Spacer(1, 24))
-
-    # ══════════════════════════════════════════════════════════
-    #  YOUR CODE GOES HERE
-    #  Use the `story` list to add content:
-    #    story.append(Paragraph("Your text", styles["Normal"]))
-    #    story.append(Table([["Col1", "Col2"], [1, 2]]))
-    #    story.append(Image("chart.png", width=400, height=200))
-    # ══════════════════════════════════════════════════════════
-    story.append(Paragraph(
-        "[ Placeholder — insert your report content here ]",
-        styles["Normal"],
-    ))
-    # ══════════════════════════════════════════════════════════
-
-    doc.build(story)
-    buffer.seek(0)
-    return buffer
-
-
-# ──────────────────────────────────────────────────────────────
-# VIEWS  (multi-step interaction)
-# ──────────────────────────────────────────────────────────────
 
 
 # ── Step 3a: Single Date Modal ────────────────────────────────
@@ -330,7 +286,7 @@ class ReportTypeView(View):
                     ephemeral=True,
                 )
             else:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     f"There are no games in the database.",
                     ephemeral=True,
                 )
@@ -433,46 +389,6 @@ def get_all_games() -> list[str]:
     #print(return_games)
     return dates, return_games
 
-
-def generate_game_pdf(game: str) -> io.BytesIO:
-    """
-    ┌─────────────────────────────────────────────────────────┐
-    │  BUILD AND RETURN A PDF REPORT FOR THE SELECTED GAME.   │
-    │  Replace / extend the placeholder below with your own   │
-    │  data queries, tables, charts, etc.                     │
-    │                                                         │
-    │  `game`  — the exact game name chosen by the user       │
-    └─────────────────────────────────────────────────────────┘
-    """
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    styles = getSampleStyleSheet()
-    story = []
-
-    story.append(Paragraph(f"Game Report: {game}", styles["Title"]))
-    story.append(Spacer(1, 12))
-    story.append(Paragraph(
-        f"<b>Generated:</b> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        styles["Normal"],
-    ))
-    story.append(Spacer(1, 24))
-
-    # ══════════════════════════════════════════════════════════
-    #  YOUR CODE GOES HERE
-    #  `game` contains the selected game name.
-    #  Example:
-    #    data = fetch_game_stats(game)
-    #    story.append(Paragraph(str(data), styles["Normal"]))
-    # ══════════════════════════════════════════════════════════
-    story.append(Paragraph(
-        "[ Placeholder — insert your game report content here ]",
-        styles["Normal"],
-    ))
-    # ══════════════════════════════════════════════════════════
-
-    doc.build(story)
-    buffer.seek(0)
-    return buffer
 
 
 # ──────────────────────────────────────────────────────────────

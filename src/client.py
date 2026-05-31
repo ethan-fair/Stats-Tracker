@@ -7,8 +7,17 @@ import sys
 import datetime
 import atexit
 import signal
+import threading
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+changes_to_send = []
+change_id_counter = 0
+
+def queue_change(data):
+    global change_id_counter
+    change_id_counter += 1
+    changes_to_send.append({"id": change_id_counter, "data": data})
 
 def close():
     global changes_to_send
@@ -18,6 +27,7 @@ def close():
         print(changes_to_send)
         with open("changes.json", "w") as f:
             json.dump(changes_to_send, f)
+            changes_to_send = []
 
 def handle_exit_signals(signum, frame):
     sys.exit(0)
@@ -34,19 +44,20 @@ scriptRunning = True
 config = configparser.ConfigParser()
 config.read('../config.ini')
 
-if not config:
+if not (config.has_section("CONNECTION") and config.has_section("FORMAT")):
     print("config.ini does not exist.")
     scriptRunning = False
     input("Press enter to continue.")
 
-try:
-    IP = config["CONNECTION"]["ip"]
-    PORT = int(config["CONNECTION"]["port"])
-    use_rich_text = config["FORMAT"]["use_rich_text"]
-except:
-    print("config.ini is incorrectly formatted.")
-    scriptRunning = False
-    input("Press enter to continue.")
+if scriptRunning:
+    try:
+        IP = config["CONNECTION"]["ip"]
+        PORT = int(config["CONNECTION"]["port"])
+        use_rich_text = config["FORMAT"]["use_rich_text"]
+    except:
+        print("config.ini is incorrectly formatted.")
+        scriptRunning = False
+        input("Press enter to continue.")
 
 
 #Declaration of colors
@@ -62,6 +73,15 @@ if scriptRunning:
         BLUE = ""
         RESET = ""
 
+def prompt_name(prompt):
+    # Re-prompt until a non-empty name is given. Empty names break the
+    # display-name logic (last_name[0]) and corrupt the database.
+    while True:
+        value = input(prompt).strip()
+        if value:
+            return value
+        print("That cannot be empty. Please enter a value.")
+
 def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
     global changes_to_send
     score = {"a": 0, "b": 0}
@@ -73,7 +93,15 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
         if packet == "name":
             do_name = True
             break
-        previous_packets = json.loads(sendMessage("PACKS"))
+        packs_response = sendMessage("PACKS")
+        if packs_response in ("TIMEOUT", "SVRCLS", "error"):
+            print(f"Could not reach the server to look up packets. {GREEN}Try again{RESET}.")
+            continue
+        try:
+            previous_packets = json.loads(packs_response)
+        except (json.JSONDecodeError, TypeError):
+            print(f"Received an unexpected response from the server. {GREEN}Try again{RESET}.")
+            continue
         ids = []
         names = {}
         flag = False
@@ -231,8 +259,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                     elif len(id) >= 3:
                         choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ")
                         if choice.lower() == "y":
-                            first_name = input(f"Enter the player's {GREEN}first name{RESET}: ")
-                            last_name = input(f"Enter the player's {GREEN}last name{RESET}: ")
+                            first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
+                            last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
                             sendMessage("ADPLR" + json.dumps([id, first_name, last_name]))
                             all_users.append(id)
                             full_name_list[id] = BLUE + first_name + " " + last_name[0] + "." + RESET
@@ -347,22 +375,22 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                         continue
                     break
                 if finalType == 1:
-                    changes_to_send.append([playerId, "powers", 1, game_date_time, tossup, "a" if playerId in teamA else "b"])
-                    changes_to_send.append([playerId, category, [1, 0, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
+                    queue_change([playerId, "powers", 1, game_date_time, tossup, "a" if playerId in teamA else "b"])
+                    queue_change([playerId, category, [1, 0, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] += 15
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 15"]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 10**6]]))
                 elif finalType == 2:
-                    changes_to_send.append([playerId, "tens", 1, game_date_time, tossup, "a" if playerId in teamA else "b"])
-                    changes_to_send.append([playerId, category, [0, 1, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
+                    queue_change([playerId, "tens", 1, game_date_time, tossup, "a" if playerId in teamA else "b"])
+                    queue_change([playerId, category, [0, 1, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] += 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 10"]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 10**6]]))
                 elif finalType == 3:
-                    changes_to_send.append([playerId, "negs", 1, game_date_time, tossup, "a" if playerId in teamA else "b"])
-                    changes_to_send.append([playerId, category, [0, 0, 1, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
+                    queue_change([playerId, "negs", 1, game_date_time, tossup, "a" if playerId in teamA else "b"])
+                    queue_change([playerId, category, [0, 0, 1, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] -= 5
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": -5"]))
@@ -385,8 +413,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                     break
             for i, dict in enumerate(rows):
                 if (dict["username"] in teamA or dict["username"] in teamB):
-                    changes_to_send.append([dict["username"], "tuh", 1, game_date_time, tossup, "a" if dict["username"] in teamA else "b"])
-                    changes_to_send.append([dict["username"], category, [0, 0, 0, 1], game_date_time, tossup, "a" if dict["username"] in teamA else "b"])
+                    queue_change([dict["username"], "tuh", 1, game_date_time, tossup, "a" if dict["username"] in teamA else "b"])
+                    queue_change([dict["username"], category, [0, 0, 0, 1], game_date_time, tossup, "a" if dict["username"] in teamA else "b"])
             if bonus:
                 for i in range(3):
                     while True:
@@ -398,12 +426,12 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                         if choice == "c":
                             if team == "a":
                                 for player in teamA:
-                                    changes_to_send.append([player, "bonus_ans", 1, game_date_time, tossup, "a" if player in teamA else "b"])
-                                    changes_to_send.append([player, "bonus_heard", 1, game_date_time, tossup, "a" if player in teamA else "b"])
+                                    queue_change([player, "bonus_ans", 1, game_date_time, tossup, "a" if player in teamA else "b"])
+                                    queue_change([player, "bonus_heard", 1, game_date_time, tossup, "a" if player in teamA else "b"])
                             elif team == "b":
                                 for player in teamB:
-                                    changes_to_send.append([player, "bonus_ans", 1, game_date_time, tossup, "a" if player in teamA else "b"])
-                                    changes_to_send.append([player, "bonus_heard", 1, game_date_time, tossup, "a" if player in teamA else "b"])
+                                    queue_change([player, "bonus_ans", 1, game_date_time, tossup, "a" if player in teamA else "b"])
+                                    queue_change([player, "bonus_heard", 1, game_date_time, tossup, "a" if player in teamA else "b"])
                             score[team] += 10
                             sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                             break
@@ -418,10 +446,10 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                         elif choice == "i":
                             if team == "a":
                                 for player in teamA:
-                                    changes_to_send.append([player, "bonus_heard", 1, game_date_time, tossup, "a" if player in teamA else "b"])
+                                    queue_change([player, "bonus_heard", 1, game_date_time, tossup, "a" if player in teamA else "b"])
                             elif team == "b":
                                 for player in teamB:
-                                    changes_to_send.append([player, "bonus_heard", 1, game_date_time, tossup, "a" if player in teamA else "b"])
+                                    queue_change([player, "bonus_heard", 1, game_date_time, tossup, "a" if player in teamA else "b"])
                             break
                         else:
                             print("That is not a valid input.")
@@ -506,8 +534,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
             elif len(id) >= 3:
                 choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ")
                 if choice.lower() == "y":
-                    first_name = input(f"Enter the player's {GREEN}first name{RESET}: ")
-                    last_name = input(f"Enter the player's {GREEN}last name{RESET}: ")
+                    first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
+                    last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
                     sendMessage("ADPLR" + json.dumps([id, first_name, last_name]))
                     if team == "a":
                         teamA[index] = id
@@ -605,7 +633,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
             break
         for dict in rows:
             if dict["username"] in teamA or dict["username"] in teamB:
-                changes_to_send.append([dict["username"], "lightning", [0, 0, 1], game_date_time, i + 1, "a" if dict["username"] in teamA else "b"])
+                queue_change([dict["username"], "lightning", [0, 0, 1], game_date_time, i + 1, "a" if dict["username"] in teamA else "b"])
         writeToDatabase()
         if do_pass:
             writeToDatabase()
@@ -622,7 +650,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": +10"]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 400]]))
-                    changes_to_send.append([playerId, "lightning", [1, 0, 0], game_date_time, i + 1, "a" if playerId in teamA else "b"])
+                    queue_change([playerId, "lightning", [1, 0, 0], game_date_time, i + 1, "a" if playerId in teamA else "b"])
                 elif up_or_down == "-10" or up_or_down == "-" or up_or_down == "neg" or up_or_down == "i":
                     if team == "a":
                         score["a"] -= 10
@@ -631,7 +659,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": -10"]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 400]]))
-                    changes_to_send.append([playerId, "lightning", [0, 1, 0], game_date_time, i + 1, "a" if playerId in teamA else "b"])
+                    queue_change([playerId, "lightning", [0, 1, 0], game_date_time, i + 1, "a" if playerId in teamA else "b"])
                 else:
                     print("That is not a valid input.")
                     continue
@@ -646,26 +674,30 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
     time.sleep(2)
     writeToDatabase()
 
-request_counter = 0
-
-def writeToDatabase():
-    global changes_to_send, request_counter, game_id_num
+def databaseWriter():
+    global changes_to_send, game_id_num
     reappend = []
     length = len(changes_to_send)
     for i in range(length):
-        data = changes_to_send.pop(0)
-        request_counter += 1
-        msg = sendMessage("WRROW" + json.dumps({"id": request_counter, "game_id": game_id_num, "data": data}), repeat=1)
+        change = changes_to_send.pop(0)
+        # Reuse the change's stable id on every send (including retries) so
+        # the server can dedup and never double-count a dropped ACK.
+        msg = sendMessage("WRROW" + json.dumps({"id": change["id"], "game_id": game_id_num, "data": change["data"]}), repeat=1)
         if msg == "TIMEOUT" or msg == "SVRCLS":
-            reappend.append(data)
+            reappend.append(change)
             break
         elif msg == "error":
-            reappend.append(data)
-    for i in reappend:
-        changes_to_send.append(i)
+            reappend.append(change)
+    for change in reappend:
+        changes_to_send.append(change)
+
+def writeToDatabase():
+    thread = threading.Thread(target=databaseWriter, daemon=True)
+    thread.start()
     
-def sendMessage(message: str, repeat = 5, timeout = 2.0):
+def sendMessage(message: str, repeat = 1, timeout = 2.0):
     for i in range(repeat):
+        client_socket = None
         try:
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             client_socket.settimeout(timeout)
@@ -679,15 +711,11 @@ def sendMessage(message: str, repeat = 5, timeout = 2.0):
         except ConnectionResetError:
             return "SVRCLS"
         finally:
-            client_socket.close()
+            if client_socket:
+                client_socket.close()
     return "TIMEOUT"
 name_rows = []
-changes_to_send = []
-if os.path.exists("changes.json"):
-    with open("changes.json") as f:
-        changes_to_send = json.load(f)
-        writeToDatabase()
-    os.remove("changes.json")
+
 fieldnames = ["username", "first_name", "last_name", "tuh", "powers", "tens", "negs", "lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash", "lightning"]
 
 try:
@@ -702,18 +730,37 @@ try:
 
     if scriptRunning:
         data = sendMessage("PLNUM")
-        if data == "SVRCLS":
+        if data == "SVRCLS" or data == "TIMEOUT":
             print(f"Server is closed. {GREEN}Launch{RESET} the server and try again or {GREEN}change{RESET} the IP.")
             scriptRunning = False
         else:
             game_id_num = int(data)
             print("Game ID: " + GREEN + str(game_id_num) + RESET)
 
+    if os.path.exists("changes.json"):
+        with open("changes.json") as f:
+            loaded = json.load(f)
+        migrated = []
+        for item in loaded:
+            if isinstance(item, dict) and "id" in item and "data" in item:
+                # Already in the id-stamped format.
+                migrated.append(item)
+            else:
+                # Old format (a raw data list): give it a fresh id.
+                change_id_counter += 1
+                migrated.append({"id": change_id_counter, "data": item})
+        # Ensure ids generated during this run can't collide with reloaded ones.
+        for item in migrated:
+            if isinstance(item.get("id"), int) and item["id"] > change_id_counter:
+                change_id_counter = item["id"]
+        changes_to_send = migrated
+        writeToDatabase()
+        os.remove("changes.json")
+
     while scriptRunning:
         print("Select a command: ")
         print(f"\t{RED}1.{RESET} Start Game")
-        print(f"\t{RED}2.{RESET} Stats Viewer")
-        print(f"\t{RED}3.{RESET} Close")
+        print(f"\t{RED}2.{RESET} Close")
         while True:
             selection = input("Selection: ")
             if selection == "1":
@@ -777,8 +824,8 @@ try:
                         elif len(id) >= 3:
                             choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ")
                             if choice.lower() == "y":
-                                first_name = input(f"Enter the player's {GREEN}first name{RESET}: ")
-                                last_name = input(f"Enter the player's {GREEN}last name{RESET}: ")
+                                first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
+                                last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
                                 sendMessage("ADPLR" + json.dumps([id, first_name, last_name]))
                                 teamA[i] = id
                                 name_rows.append({"username": id, "first_name": first_name, "last_name": last_name})
@@ -804,8 +851,8 @@ try:
                         elif len(id) >= 3:
                             choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ")
                             if choice.lower() == "y":
-                                first_name = input(f"Enter the player's {GREEN}first name{RESET}: ")
-                                last_name = input(f"Enter the player's {GREEN}last name{RESET}: ")
+                                first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
+                                last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
                                 sendMessage("ADPLR" + json.dumps([id, first_name, last_name]))
                                 teamB[i] = id
                                 name_rows.append({"username": id, "first_name": first_name, "last_name": last_name})
@@ -828,74 +875,34 @@ try:
                 questionTracker(name_rows, tossups, lightnings, teamA, teamB, bouncebacks)
                 input(f"Press {GREEN}enter{RESET} to continue.")
                 break
-            elif selection == "2":            
-                all_users = []
-                full_name_list = {}
-                for player in range(len(name_rows)):
-                    all_users.append(name_rows[player]["username"])
-                    full_name_list[name_rows[player]["username"]] = BLUE + name_rows[player]["first_name"] + " " + name_rows[player]["last_name"] + RESET
-                while True:
-                    id = input(f"Enter user ID to {GREEN}pull data{RESET}: ")
-                    if id in all_users:
-                        rows = sendMessage("RWUSR" + id)
-                        if rows == "SVRCLS":
-                            print(f"Server is closed. {GREEN}Launch{RESET} the server and try again or {GREEN}change{RESET} the IP.")
-                            id = "pass"
-                        else:
-                            rows = json.loads(rows)
-                        break
-                    elif id.lower() == "pass":
-                        id = id.lower()
-                        break
-                    else:
-                        print("That is not a valid user ID.")
-                        continue
-                if not id == "pass":
-                    for key in rows.keys():
-                        if isinstance(rows[key], str) and key != "first_name" and key != "last_name" and key != "username":
-                            rows[key] = json.loads(rows[key])
-                            for item in range(len(rows[key])):
-                                rows[key][item] = int(rows[key][item])
-                    print_list = [
-                        "Data for " + BLUE + rows["first_name"] + rows["last_name"] + RESET + ":",
-                        "    " + RED + str(rows["powers"]) + "/" + str(rows["tens"]) + "/" + str(rows["negs"]) + RESET + " with " + str(rows["tuh"]) + " tossups heard." + (" (P%: " + str(round((rows["powers"]) / rows["tuh"] * 10000) / 100) + "%, Points: " + str(rows["powers"] * 15 + rows["tens"] * 10 + rows["negs"] * -5) + ")" if rows["tuh"] > 0 else ""),
-                        "\t" + GREEN + "Literature" + RESET + ": " + (RED + str(round((rows["lit"][0] + rows["lit"][1]) / rows["lit"][3] * 10000) / 100) + f"%{RESET} (" + str(rows["lit"][0] + rows["lit"][1]) + "/" + str(rows["lit"][3]) + ", P%: " + str(round((rows["lit"][0]) / rows["lit"][3] * 10000) / 100) + "%, -5%: " + str(round((rows["lit"][2]) / rows["lit"][3] * 10000) / 100) + "%)" if rows["lit"][3] > 0 else f"{RED}No questions heard{RESET}"),
-                        "\t" + GREEN + "History" + RESET + ": " + (RED + str(round((rows["history"][0] + rows["history"][1]) / rows["history"][3] * 10000) / 100) + f"%{RESET} (" + str(rows["history"][0] + rows["history"][1]) + "/" + str(rows["history"][3]) + ", P%: " + str(round((rows["history"][0]) / rows["history"][3] * 10000) / 100) + "%, -5%: " + str(round((rows["history"][2]) / rows["history"][3] * 10000) / 100) + "%)" if rows["history"][3] > 0 else f"{RED}No questions heard{RESET}"),
-                        "\t" + GREEN + "Science" + RESET + ": " + (RED + str(round((rows["science"][0] + rows["science"][1]) / rows["science"][3] * 10000) / 100) + f"%{RESET} (" + str(rows["science"][0] + rows["science"][1]) + "/" + str(rows["science"][3]) + ", P%: " + str(round((rows["science"][0]) / rows["science"][3] * 10000) / 100) + "%, -5%: " + str(round((rows["science"][2]) / rows["science"][3] * 10000) / 100) + "%)" if rows["science"][3] > 0 else f"{RED}No questions heard{RESET}"),
-                        "\t" + GREEN + "Fine Arts" + RESET + ": " + (RED + str(round((rows["fine_arts"][0] + rows["fine_arts"][1]) / rows["fine_arts"][3] * 10000) / 100) + f"%{RESET} (" + str(rows["fine_arts"][0] + rows["fine_arts"][1]) + "/" + str(rows["fine_arts"][3]) + ", P%: " + str(round((rows["fine_arts"][0]) / rows["fine_arts"][3] * 10000) / 100) + "%, -5%: " + str(round((rows["fine_arts"][2]) / rows["fine_arts"][3] * 10000) / 100) + "%)" if rows["fine_arts"][3] > 0 else f"{RED}No questions heard{RESET}"),
-                        "\t" + GREEN + "Geography" + RESET + ": " + (RED + str(round((rows["geography"][0] + rows["geography"][1]) / rows["geography"][3] * 10000) / 100) + f"%{RESET} (" + str(rows["geography"][0] + rows["geography"][1]) + "/" + str(rows["geography"][3]) + ", P%: " + str(round((rows["geography"][0]) / rows["geography"][3] * 10000) / 100) + "%, -5%: " + str(round((rows["geography"][2]) / rows["geography"][3] * 10000) / 100) + "%)" if rows["geography"][3] > 0 else f"{RED}No questions heard{RESET}"),
-                        "\t" + GREEN + "Current Events" + RESET + ": " + (RED + str(round((rows["current_events"][0] + rows["current_events"][1]) / rows["current_events"][3] * 10000) / 100) + f"%{RESET} (" + str(rows["current_events"][0] + rows["current_events"][1]) + "/" + str(rows["current_events"][3]) + ", P%: " + str(round((rows["current_events"][0]) / rows["current_events"][3] * 10000) / 100) + "%, -5%: " + str(round((rows["current_events"][2]) / rows["current_events"][3] * 10000) / 100) + "%)" if rows["current_events"][3] > 0 else f"{RED}No questions heard{RESET}"),
-                        "\t" + GREEN + "Religion, Mythology, Philosophy, Social Science" + RESET + ": " + (RED + str(round((rows["rmpss"][0] + rows["rmpss"][1]) / rows["rmpss"][3] * 10000) / 100) + f"%{RESET} (" + str(rows["rmpss"][0] + rows["rmpss"][1]) + "/" + str(rows["rmpss"][3]) + ", P%: " + str(round((rows["rmpss"][0]) / rows["rmpss"][3] * 10000) / 100) + "%, -5%: " + str(round((rows["rmpss"][2]) / rows["rmpss"][3] * 10000) / 100) + "%)" if rows["rmpss"][3] > 0 else f"{RED}No questions heard{RESET}"),
-                        "\t" + GREEN + "Trash / Pop Culture" + RESET + ": " + (RED + str(round((rows["trash"][0] + rows["trash"][1]) / rows["trash"][3] * 10000) / 100) + f"%{RESET} (" + str(rows["trash"][0] + rows["trash"][1]) + "/" + str(rows["trash"][3]) + ", P%: " + str(round((rows["trash"][0]) / rows["trash"][3] * 10000) / 100) + "%, -5%: " + str(round((rows["trash"][2]) / rows["trash"][3] * 10000) / 100) + "%)" if rows["trash"][3] > 0 else f"{RED}No questions heard{RESET}"),
-                        "\t" + GREEN + "Lightning" + RESET + ": " + (RED + str(round(rows["lightning"][0] / rows["lightning"][2] * 10000) / 100) + f"%{RESET} (" + str(rows["lightning"][0]) + "/" + str(rows["lightning"][2]) + ")" if rows["lightning"][2] > 0 else f"{RED}No questions heard{RESET}"),
-                        "\t" + GREEN + "Bonus Conversion" + RESET + ": " + (RED + str(round(rows["bonus_ans"] / rows["bonus_heard"] * 10000) / 100) + f"%{RESET} (" + str(rows["bonus_ans"]) + "/" + str(rows["bonus_heard"]) + ")" if rows["bonus_heard"] > 0 else f"{RED}No questions heard{RESET}")
-                    ]
-                    for i in print_list:
-                        print(i)
-                    input(f"Press {GREEN}enter{RESET} to continue.")
-                break
-            elif selection == "3":
+            
+            elif selection == "2":
                 scriptRunning = False
                 break
             else:
                 print("That is not a valid input.")
 
-    if changes_to_send:
-        writeToDatabase()
-    if changes_to_send:
-        print(changes_to_send)
-        with open("changes.json", "w") as f:
-            json.dump(changes_to_send, f)
+    close()
     try:
         sendMessage("CLOSE" + str(game_id_num), repeat=1)
     except:
         pass
-except Exception as e:
-    #print(e)
-    if changes_to_send:
-        writeToDatabase()
-    if changes_to_send:
-        with open("changes.json", "w") as f:
-            json.dump(changes_to_send, f)
-    if sendMessage("CLOSE" + str(game_id_num), repeat=1) != "pass":
+except OSError:
+    # Network-level failure (socket errors, timeouts, connection reset).
+    close()
+    try:
+        if sendMessage("CLOSE" + str(game_id_num), repeat=1) != "pass":
+            input("The connection to the server has failed.\nPress enter to continue.")
+    except:
         input("The connection to the server has failed.\nPress enter to continue.")
+except Exception as e:
+    # Not a network problem -- surface the real error rather than blaming the
+    # connection, so the actual bug can be diagnosed.
+    close()
+    try:
+        sendMessage("CLOSE" + str(game_id_num), repeat=1)
+    except:
+        pass
+    input(f"An unexpected error occurred: {type(e).__name__}: {e}\nPress enter to continue.")
+
+atexit.unregister(close)
