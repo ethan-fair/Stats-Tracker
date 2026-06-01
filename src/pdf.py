@@ -307,6 +307,41 @@ def _team_block(team, styles, width):
     ]
 
 
+# ---------- bonus conversion (match report) ----------
+def _bonus_table(bonus_data, styles, width):
+    """Bonus conversion line for both teams: answered / heard / conversion / PP3BH.
+
+    bonus_data: {"a": [answered, heard], "b": [answered, heard]}
+    """
+    rows = [["TEAM", "ANSWERED", "HEARD", "CONVERSION", "PP3BH", "RATE"]]
+    for team, label in (("a", "Team A"), ("b", "Team B")):
+        ans, heard = bonus_data[team][0], bonus_data[team][1]
+        conv = ans / heard * 100 if heard > 0 else 0
+        pp3bh = ans / heard * 30 if heard > 0 else 0
+        rows.append([
+            Paragraph(f"<b>{label}</b>", styles["base"]),
+            str(ans), str(heard),
+            f"{conv:.1f}%", f"{pp3bh:.1f}",
+            Slider(width * 0.22, 10, conv, _bonus_color(conv)),
+        ])
+    cw = [0.22, 0.13, 0.13, 0.15, 0.12, 0.25]
+    t = Table(rows, colWidths=[c * width for c in cw])
+    t.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7),
+        ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.8, INK),
+        ("LINEBELOW", (0, 1), (-1, -2), 0.25, RULE),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, PAPER]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (1, 0), (-2, -1), "CENTER"),
+        ("ALIGN", (-1, 0), (-1, -1), "LEFT"),
+        ("FONT", (1, 1), (-2, -1), "Helvetica-Bold", 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    return t
+
+
 # ---------- legend ----------
 def _legend(styles, width):
     items = [("Power · +15", POWER), ("Get · +10", GET),
@@ -360,6 +395,7 @@ def generate_match_report(date, out_path = None):
 
     game_data = []
     round_data = {0: {"a": 0, "b": 0}}
+    bonus_data = {"a": [0, 0], "b": [0, 0]}
     teamA = []
     teamB = []
 
@@ -383,10 +419,12 @@ def generate_match_report(date, out_path = None):
             round_data[i["question_num"]][team] -= 5 * i["question_data"][2][2]
         if i["question_data"][1] == "bonus_ans":
             round_data[i["question_num"]][team] += 10
+            bonus_data[team][0] += 1
         if i["question_data"][1] == "lightning":
             round_data[i["question_num"]][team] += 10 * i["question_data"][2][0]
             round_data[i["question_num"]][team] -= 10 * i["question_data"][2][1]
-    
+        if i["question_data"][1] == "bonus_heard":
+            bonus_data[team][1] += 1
 
     if not game_data:
         return None
@@ -409,9 +447,23 @@ def generate_match_report(date, out_path = None):
     # player stats
     #story.append(Paragraph("§ 01 &nbsp; Player lines", styles["h2"]))
     #story.append(Spacer(1, 8))
+    story.append(Paragraph("T E A M &nbsp; A", styles["eyebrow"]))
+    story.append(Spacer(1, 4))
     story += _team_block(teamA, styles, W)
-    #story.append(HLine(W)); story.append(Spacer(1, 8))
+    story.append(HLine(W, INK, 1.2))
+    story.append(Spacer(1, 8))
+    story.append(Paragraph("T E A M &nbsp; B", styles["eyebrow"]))
+    story.append(Spacer(1, 4))
     story += _team_block(teamB, styles, W)
+    story.append(HLine(W, INK, 1.2))
+    story.append(Spacer(1, 8))
+
+    # bonus conversion (both teams)
+    story.append(Paragraph("B O N U S &nbsp; C O N V E R S I O N", styles["eyebrow"]))
+    story.append(Spacer(1, 4))
+    story.append(_bonus_table(bonus_data, styles, W))
+    story.append(Spacer(1, 12))
+
     story.append(_running_score_chart(round_data, W))
 
     doc.build(story)
@@ -432,17 +484,19 @@ def _category_slider_table(cats, styles, width):
     for c in cats:
         if c in categories:
             if cats[c][3] == 0:
-                cats[c][3] = 1
+                cats[c][3] = 0.1
+
             segs = [(cats[c][0], POWER), (cats[c][1], GET),
                 ((cats[c][3] - (cats[c][0] + cats[c][1] + cats[c][2])), NEUTRAL), (cats[c][2], NEG)]
             rows.append([
                 cats[c][4], f"{(cats[c][0] / cats[c][3] * 100):.1f}" + "%",
-                StackedBar(width * 0.42, 10, segs), str(cats[c][0]) + "/" + str(cats[c][1]) + "/" + str(cats[c][2]),
+                StackedBar(width * 0.32, 10, segs), str(cats[c][3] if cats[c][3] != 0.1 else 0),
+                str(cats[c][0]) + "/" + str(cats[c][1]) + "/" + str(cats[c][2]),
                 str(cats[c][0] * 15 + cats[c][1] * 10 + cats[c][2] * -5),
             ])
-    rows.sort(key = lambda x: int(x[4]), reverse = True)
-    rows = [["CATEGORY", "P%", "ACCURACY", "DISTRUBITION", "PTS"]] + rows
-    cw = [0.22, 0.06, 0.46, 0.12, 0.14]
+    rows.sort(key = lambda x: int(x[5]), reverse = True)
+    rows = [["CATEGORY", "P%", "ACCURACY", "TUH", "DISTRUBITION", "PTS"]] + rows
+    cw = [0.22, 0.06, 0.36, 0.12, 0.12, 0.12]
     t = Table(rows, colWidths=[c * width for c in cw])
     t.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7),
@@ -451,12 +505,14 @@ def _category_slider_table(cats, styles, width):
         ("LINEBELOW", (0, 1), (-1, -2), 0.25, RULE),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (1, 0), (1, -1), "CENTER"),
-        ("ALIGN", (3, 0), (3, -1), "RIGHT"),
+        ("ALIGN", (3, 0), (3, -1), "CENTER"),
         ("ALIGN", (4, 0), (4, -1), "CENTER"),
+        ("ALIGN", (5, 0), (5, -1), "CENTER"),
         ("FONT", (0, 1), (0, -1), "Helvetica-Bold", 9),
         ("FONT", (1, 1), (1, -1), "Helvetica-Bold", 9),
         ("FONT", (3, 1), (3, -1), "Helvetica-Bold", 9),
         ("FONT", (4, 1), (4, -1), "Helvetica-Bold", 9),
+        ("FONT", (5, 1), (5, -1), "Helvetica-Bold", 9),
         ("TOPPADDING", (0, 0), (-1, -1), 7),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
     ]))
@@ -671,11 +727,12 @@ def generate_player_report(player, games, out_path = None):
     
     story.append(Paragraph("§ 03 &nbsp; Bonus Conversion", styles["h2"]))
     tiles = [
-        _stat_tile("ANSWERED", str(master_data_list["bonus_ans"]), styles, W / 3),
-        _stat_tile("HEARD", str(master_data_list["bonus_heard"]), styles, W / 3),
-        _stat_tile("PP3BH", f"{master_data_list["bonus_ans"] / master_data_list["bonus_heard"] * 30 if master_data_list["bonus_heard"] > 0 else 0:.1f}", styles, W / 3)
+        _stat_tile("ANSWERED", str(master_data_list["bonus_ans"]), styles, W / 4),
+        _stat_tile("HEARD", str(master_data_list["bonus_heard"]), styles, W / 4),
+        _stat_tile("CONVERSION", f"{master_data_list["bonus_ans"] / master_data_list["bonus_heard"] * 100 if master_data_list["bonus_heard"] > 0 else 0:.1f}" + "%", styles, W / 4),
+        _stat_tile("PP3BH", f"{master_data_list["bonus_ans"] / master_data_list["bonus_heard"] * 30 if master_data_list["bonus_heard"] > 0 else 0:.1f}", styles, W / 4)
     ]
-    tile_row = Table([tiles], colWidths=[W / 3] * 3)
+    tile_row = Table([tiles], colWidths=[W / 4] * 4)
     tile_row.setStyle(TableStyle([
         ("LEFTPADDING", (0, 0), (-1, -1), 3),
         ("RIGHTPADDING", (0, 0), (-1, -1), 3),

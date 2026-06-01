@@ -82,7 +82,7 @@ def prompt_name(prompt):
             return value
         print("That cannot be empty. Please enter a value.")
 
-def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
+def questionTracker(rows, tossups, lightnings, teamA, teamB):
     global changes_to_send
     score = {"a": 0, "b": 0}
     tossup = 0
@@ -111,7 +111,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
             ids.append(previous_packet["id"])
             names[previous_packet["id"]] = previous_packet["name"]
             if previous_packet["id"] == packet:
-                confirm = input("Packet is " + GREEN + names[packet] + RESET + " and was last played " + str(abs((datetime.datetime.now().date() - datetime.datetime.strptime(previous_packet["date"], "%m/%d/%Y").date()).days)) + " days ago.\nConfirm packet (y / n): ").lower()
+                confirm = input("Packet is " + GREEN + names[packet] + RESET + " and was last played " + str(abs((datetime.datetime.now().date() - datetime.datetime.strptime(previous_packet["date"], "%m/%d/%Y").date()).days)) + " days ago.\nConfirm packet (y / n): ").lower().strip()
                 flag = True
                 if confirm == "y":
                     sendMessage("WRPAC" + json.dumps({"date": datetime.date.today().strftime("%m/%d/%Y"), "id": packet}))
@@ -119,14 +119,14 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                     continue
                 break
         if not flag:
-            packet_name = input(f"Packet is not identified in the database.\nEnter a name for the packet (ex: {GREEN}Invitational Series #226A Packet 1{RESET}) or pass: ")
+            packet_name = input(f"Packet is not identified in the database.\nEnter a name for the packet (ex: {GREEN}Invitational Series #226A Packet 1{RESET}) or pass: ").strip()
             if packet_name.lower() == "pass":
                 continue
             sendMessage("ADPAC" + json.dumps([packet, packet_name, datetime.date.today().strftime("%m/%d/%Y")]))
             names[packet] = packet_name
         break
     if do_name:
-        name = input("Enter session name: ")
+        name = input("Enter session name: ").strip()
     else:
         name = names[packet]
     sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name}]))
@@ -154,7 +154,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
             print(f"\t{RED}7.{RESET} Religion, Mythology, Politics, Social Science (RMPSS)")  
             print(f"\t{RED}8.{RESET} Trash / Pop Culture")
             print(f"\t{RED}9.{RESET} Substitutions")
-            catNum = input("Selection: ")
+            catNum = input("Selection: ").strip()
             valid = False
             try:
                 catNum = int(catNum)
@@ -234,7 +234,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                 if invalid_input:
                     print("That is not a valid player.")
                     continue
-                confirm = input(f"{GREEN}Confirm{RESET} that the player being subbed out is " + full_name_list[playerId] + ": ").lower()
+                confirm = input(f"{GREEN}Confirm{RESET} that the player being subbed out is " + full_name_list[playerId] + ": ").lower().strip()
                 if confirm != "y":
                     continue
                 if playerId in teamA:
@@ -244,12 +244,12 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                     team = "b"
                     index = teamB.index(playerId)
                 while True:
-                    id = input(f"Enter user ID to {GREEN}replace{RESET} " + full_name_list[playerId] + ": ")
+                    id = input(f"Enter user ID to {GREEN}replace{RESET} " + full_name_list[playerId] + ": ").strip()
                     if id in teamA or id in teamB:
                         print("That player is already in play.")
                         continue
                     if id in all_users:
-                        confirm = input(f"{GREEN}Confirm{RESET} that the player being subbed in is " + full_name_list[id] + " (y or n): ")
+                        confirm = input(f"{GREEN}Confirm{RESET} that the player being subbed in is " + full_name_list[id] + " (y or n): ").strip()
                         if confirm.lower() == "y":
                             if team == "a":
                                 teamA[index] = id
@@ -259,7 +259,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                         else:
                             continue
                     elif len(id) >= 3:
-                        choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ")
+                        choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ").strip()
                         if choice.lower() == "y":
                             first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                             last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
@@ -300,7 +300,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                 playerId = ""
                 invalid_input = False
                 return_with_neg_error = False
-                player = input("Player (team & seat or player ID): ").lower()
+                player = input("Player (team & seat or player ID): ").lower().strip()
                 if len(player) == 2:
                     if (player[:1] == "a"):
                         try:
@@ -337,7 +337,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                     else:
                         invalid_input = True
                     if not invalid_input:
-                        if input(f"{GREEN}Confirm{RESET} that the player is " + full_name_list[playerId] + " (y or n): ").lower() != "y":
+                        if input(f"{GREEN}Confirm{RESET} that the player is " + full_name_list[playerId] + " (y or n): ").lower().strip() != "y":
                             continue
                 elif player == "pass":
                     print("No player answered.")
@@ -363,7 +363,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                     print(f"A player on {BLUE}team " + team.upper() + RESET + " has already answered.")
                     continue
                 while True:
-                    answerType = input(f"{GREEN}Power{RESET}, {GREEN}ten{RESET}, {GREEN}neg{RESET}, or {GREEN}zero{RESET} (1, 2, 3, or 4): ").lower()
+                    answerType = input(f"{GREEN}Power{RESET}, {GREEN}ten{RESET}, {GREEN}neg{RESET}, or {GREEN}zero{RESET} (1, 2, 3, or 4): ").lower().strip()
                     if answerType == "power" or answerType == "1" or answerType == "15":
                         finalType = 1
                     elif answerType == "ten" or answerType == "2" or answerType == "10":
@@ -421,10 +421,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                 for i in range(3):
                     while True:
                         print(f"{GREEN}Bonus " + str(i + 1) + RESET + f" for {GREEN}team " + team.upper() + RESET + ":")
-                        if bouncebacks:
-                            choice = input(f"{GREEN}Correct{RESET}, {GREEN}incorrect{RESET}, or {GREEN}bounceback{RESET} (c, i, bb): ").lower()
-                        else:
-                            choice = input(f"{GREEN}Correct{RESET} or {GREEN}incorrect{RESET}(c or i): ").lower()
+                        choice = input(f"{GREEN}Correct{RESET} or {GREEN}incorrect{RESET}(c or i): ").lower().strip()
                         if choice == "c":
                             if team == "a":
                                 for player in teamA:
@@ -435,14 +432,6 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                                     queue_change([player, "bonus_ans", 1, game_date_time, tossup, "a" if player in teamA else "b"])
                                     queue_change([player, "bonus_heard", 1, game_date_time, tossup, "a" if player in teamA else "b"])
                             score[team] += 10
-                            sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
-                            break
-                        elif choice == "bb" and bouncebacks:
-                            if team == "a":
-                                scoreAdd = "b"
-                            elif team == "b":
-                                scoreAdd = "a"
-                            score[scoreAdd] += 5
                             sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                             break
                         elif choice == "i":
@@ -475,7 +464,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
         team = ""
         index = -1
         invalid_input = False
-        player = input(f"{GREEN}Input{RESET} player (team & seat or player ID) to be subbed {GREEN}OUT{RESET}, or enter \"c\" to cancel: ").lower()
+        player = input(f"{GREEN}Input{RESET} player (team & seat or player ID) to be subbed {GREEN}OUT{RESET}, or enter \"c\" to cancel: ").lower().strip()
         if player == "c":
             break
         if len(player) == 2:
@@ -509,7 +498,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
         if invalid_input:
             print("That is not a valid player.")
             continue
-        confirm = input(f"{GREEN}Confirm{RESET} that the player being subbed out is " + full_name_list[playerId] + ": ").lower()
+        confirm = input(f"{GREEN}Confirm{RESET} that the player being subbed out is " + full_name_list[playerId] + ": ").lower().strip()
         if confirm != "y":
             continue
         if playerId in teamA:
@@ -519,12 +508,12 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
             team = "b"
             index = teamB.index(playerId)
         while True:
-            id = input(f"Enter user ID to {GREEN}replace{RESET} " + full_name_list[playerId] + ": ").lower()
+            id = input(f"Enter user ID to {GREEN}replace{RESET} " + full_name_list[playerId] + ": ").lower().strip()
             if id in teamA or id in teamB:
                 print("That player is already in play.")
                 continue
             if id in all_users:
-                confirm = input(f"Confirm that the player is " + full_name_list[id] + " (y or n): ")
+                confirm = input(f"Confirm that the player is " + full_name_list[id] + " (y or n): ").strip()
                 if confirm.lower() == "y":
                     if team == "a":
                         teamA[index] = id
@@ -534,7 +523,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                 else:
                     continue
             elif len(id) >= 3:
-                choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ")
+                choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ").strip()
                 if choice.lower() == "y":
                     first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                     last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
@@ -586,7 +575,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                 name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
             playerId = ""
             invalid_input = False
-            player = input(f"{GREEN}Player{RESET} (team & seat or player ID): ").lower()
+            player = input(f"{GREEN}Player{RESET} (team & seat or player ID): ").lower().strip()
             do_pass = False
             if len(player) == 2:
                 if (player[:1] == "a"):
@@ -614,7 +603,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
                     except:
                         invalid_input = True
                 if not invalid_input:
-                    if input(f"{GREEN}Confirm{RESET} that the player is " + full_name_list[playerId] + " (y or n): ").lower() != "y":
+                    if input(f"{GREEN}Confirm{RESET} that the player is " + full_name_list[playerId] + " (y or n): ").lower().strip() != "y":
                         continue
             elif player == "pass":
                 print("No player answered, going to next question.")
@@ -642,7 +631,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, bouncebacks):
             pass
         else:
             while True:
-                up_or_down = input("Correct or incorrect (c or i): ").lower()
+                up_or_down = input("Correct or incorrect (c or i): ").lower().strip()
                 up_or_down = "".join(up_or_down.split())
                 if up_or_down == "+10" or up_or_down == "+" or up_or_down == "plus" or up_or_down == "c":
                     if team == "a":
@@ -724,7 +713,7 @@ try:
         if data == "SVRCLS" or data == "TIMEOUT":
             print(f"Server is closed. {GREEN}Launch{RESET} the server and try again or {GREEN}change{RESET} the IP.")
             scriptRunning = False
-            input("Press enter to continue.")
+            input(f"Press {GREEN}enter{RESET} to continue.")
         else:
             name_rows = json.loads(data)
 
@@ -733,6 +722,7 @@ try:
         if data == "SVRCLS" or data == "TIMEOUT":
             print(f"Server is closed. {GREEN}Launch{RESET} the server and try again or {GREEN}change{RESET} the IP.")
             scriptRunning = False
+            input(f"Press {GREEN}enter{RESET} to continue.")
         else:
             game_id_num = int(data)
             print("Game ID: " + GREEN + str(game_id_num) + RESET)
@@ -759,25 +749,25 @@ try:
         print(f"\t{RED}1.{RESET} Start Game")
         print(f"\t{RED}2.{RESET} Close")
         while True:
-            selection = input("Selection: ")
+            selection = input("Selection: ").strip()
             if selection == "1":
                 sendMessage("RESCR" + str(game_id_num))
                 while True:
-                    tossups = input(f"Enter number of {GREEN}tossups{RESET}: ")
+                    tossups = input(f"Enter number of {GREEN}tossups{RESET}: ").strip()
                     try:
                         tossups = int(tossups)
                         break
                     except:
                         print("That is not a valid input.")
                 while True:
-                    lightnings = input(f"Enter number of {GREEN}lightnings{RESET}: ")
+                    lightnings = input(f"Enter number of {GREEN}lightnings{RESET}: ").strip()
                     try:
                         lightnings = int(lightnings)
                         break
                     except:
                         print("That is not a valid input.")
                 while True:
-                    players = input(f"Enter number of {GREEN}players per team{RESET}: ")
+                    players = input(f"Enter number of {GREEN}players per team{RESET}: ").strip()
                     try:
                         players = int(players)
                         if players == 0:
@@ -785,16 +775,6 @@ try:
                             continue
                         break
                     except:
-                        print("That is not a valid input.")
-                while True:
-                    bouncebacks = input(f"Use {GREEN}bouncebacks{RESET} (y or n): ").lower()
-                    if bouncebacks == "y":
-                        bouncebacks = True
-                        break
-                    elif bouncebacks == "n":
-                        bouncebacks = False
-                        break
-                    else:
                         print("That is not a valid input.")
                 teamA = [""] * players
                 teamB = [""] * players
@@ -807,19 +787,19 @@ try:
                     name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
                 for i in range(players):
                     while True:
-                        id = input(f"Enter user ID for {GREEN}seat " + str(i + 1) + RESET + f" on {GREEN}team A{RESET}: ").lower()
+                        id = input(f"Enter user ID for {GREEN}seat " + str(i + 1) + RESET + f" on {GREEN}team A{RESET}: ").lower().strip()
                         if id in teamA or id in teamB:
                             print("That player is already in the game.")
                             continue
                         if id in all_users:
-                            confirm = input("Confirm that the player is " + full_name_list[id] + " (y or n): ")
+                            confirm = input("Confirm that the player is " + full_name_list[id] + " (y or n): ").strip()
                             if confirm.lower() == "y":
                                 teamA[i] = id
                                 break
                             else:
                                 continue
                         elif len(id) >= 3:
-                            choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ")
+                            choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ").strip()
                             if choice.lower() == "y":
                                 first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                                 last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
@@ -834,19 +814,19 @@ try:
                             continue
                 for i in range(players):
                     while True:
-                        id = input(f"Enter user ID for {GREEN}seat " + str(i + 1) + RESET + f" on {GREEN}team B{RESET}: ").lower()
+                        id = input(f"Enter user ID for {GREEN}seat " + str(i + 1) + RESET + f" on {GREEN}team B{RESET}: ").lower().strip()
                         if id in teamA or id in teamB:
                             print("That player is already in the game.")
                             continue
                         if id in all_users:
-                            confirm = input("Confirm that the player is " + full_name_list[id] + " (y or n): ")
+                            confirm = input("Confirm that the player is " + full_name_list[id] + " (y or n): ").strip()
                             if confirm.lower() == "y":
                                 teamB[i] = id
                                 break
                             else:
                                 continue
                         elif len(id) >= 3:
-                            choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ")
+                            choice = input(f"Player not found in database. {GREEN}Add{RESET} a player with this username? (y or n): ").strip()
                             if choice.lower() == "y":
                                 first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                                 last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
@@ -869,7 +849,7 @@ try:
                 
                 writeToDatabase()
                 sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": [name_list[i] for i in teamA], "b": [name_list[i] for i in teamB]}]))
-                questionTracker(name_rows, tossups, lightnings, teamA, teamB, bouncebacks)
+                questionTracker(name_rows, tossups, lightnings, teamA, teamB)
                 input(f"Press {GREEN}enter{RESET} to continue.")
                 break
             
@@ -888,9 +868,9 @@ except OSError:
     close()
     try:
         if sendMessage("CLOSE" + str(game_id_num), repeat=1) != "pass":
-            input("The connection to the server has failed.\nPress enter to continue.")
+            input(f"The connection to the server has failed.\nPress {GREEN}enter{RESET} to continue.")
     except:
-        input("The connection to the server has failed.\nPress enter to continue.")
+        input(f"The connection to the server has failed.\nPress {GREEN}enter{RESET} to continue.")
 except Exception as e:
     close()
     try:
