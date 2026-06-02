@@ -75,22 +75,7 @@ while True:
                 CREATE TABLE IF NOT EXISTS players (
                     username TEXT PRIMARY KEY,
                     first_name TEXT NOT NULL,
-                    last_name TEXT NOT NULL,
-                    tuh INTEGER DEFAULT 0,
-                    powers INTEGER DEFAULT 0,
-                    tens INTEGER DEFAULT 0,
-                    negs INTEGER DEFAULT 0,
-                    lit TEXT NOT NULL,
-                    history TEXT NOT NULL,
-                    science TEXT NOT NULL,
-                    fine_arts TEXT NOT NULL,
-                    geography TEXT NOT NULL,
-                    current_events TEXT NOT NULL,
-                    rmpss TEXT NOT NULL,
-                    trash TEXT NOT NULL,
-                    lightning TEXT NOT NULL,
-                    bonus_ans INTEGER DEFAULT 0,
-                    bonus_heard INTEGER DEFAULT 0
+                    last_name TEXT NOT NULL
                 )
             """)
             conn.commit()
@@ -240,29 +225,14 @@ while True:
                     CREATE TABLE IF NOT EXISTS players (
                         username TEXT PRIMARY KEY,
                         first_name TEXT NOT NULL,
-                        last_name TEXT NOT NULL,
-                        tuh INTEGER DEFAULT 0,
-                        powers INTEGER DEFAULT 0,
-                        tens INTEGER DEFAULT 0,
-                        negs INTEGER DEFAULT 0,
-                        lit TEXT NOT NULL,
-                        history TEXT NOT NULL,
-                        science TEXT NOT NULL,
-                        fine_arts TEXT NOT NULL,
-                        geography TEXT NOT NULL,
-                        current_events TEXT NOT NULL,
-                        rmpss TEXT NOT NULL,
-                        trash TEXT NOT NULL,
-                        lightning TEXT NOT NULL,
-                        bonus_ans INTEGER DEFAULT 0,
-                        bonus_heard INTEGER DEFAULT 0
+                        last_name TEXT NOT NULL
                     )
                 """)
                 conn.commit()
 
                 cursor.execute("SELECT * FROM players")
                 result = cursor.fetchall()
-            
+
             rows = [dict(row) for row in result]
 
             conn.close()
@@ -273,53 +243,20 @@ while True:
                 server_socket.sendto(b"error", addr)
                 continue
 
-            to_insert = {"username": data[0], "first_name": data[1], "last_name": data[2], "tuh": 0, "powers": 0, "tens": 0, "negs": 0, "lit": [0, 0, 0, 0], "history": [0, 0, 0, 0], "science": [0, 0, 0, 0], "fine_arts": [0, 0, 0, 0], "geography": [0, 0, 0, 0], "current_events": [0, 0, 0, 0], "rmpss": [0, 0, 0, 0], "trash": [0, 0, 0, 0], "lightning": [0, 0, 0], "bonus_ans": 0, "bonus_heard": 0}
+            to_insert = {"username": data[0], "first_name": data[1], "last_name": data[2]}
 
             conn = sqlite3.connect("players.db")
             c = conn.cursor()
-            for key, value in to_insert.items():
-                if type(value) is list:
-                    to_insert[key] = json.dumps(value)
             c.execute("""
-            INSERT INTO players (username, first_name, last_name, tuh, powers, tens, negs, lit, history, science, fine_arts, geography, current_events, rmpss, trash, lightning, bonus_ans, bonus_heard)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO players (username, first_name, last_name)
+            VALUES (?, ?, ?)
             ON CONFLICT(username) DO UPDATE SET
                 first_name=excluded.first_name,
-                last_name=excluded.last_name,
-                tuh=excluded.tuh,
-                powers=excluded.powers,
-                tens=excluded.tens,
-                negs=excluded.negs,
-                lit=excluded.lit,
-                history=excluded.history,
-                science=excluded.science,
-                fine_arts=excluded.fine_arts,
-                geography=excluded.geography,
-                current_events=excluded.current_events,
-                rmpss=excluded.rmpss,
-                trash=excluded.trash,
-                lightning=excluded.lightning,
-                bonus_ans=excluded.bonus_ans,
-                bonus_heard=excluded.bonus_heard
+                last_name=excluded.last_name
             """, (
                 to_insert["username"],
                 to_insert["first_name"],
-                to_insert["last_name"],
-                to_insert["tuh"],
-                to_insert["powers"],
-                to_insert["tens"],
-                to_insert["negs"],
-                to_insert["lit"],
-                to_insert["history"],
-                to_insert["science"],
-                to_insert["fine_arts"],
-                to_insert["geography"],
-                to_insert["current_events"],
-                to_insert["rmpss"],
-                to_insert["trash"],
-                to_insert["lightning"],
-                to_insert["bonus_ans"],
-                to_insert["bonus_heard"]
+                to_insert["last_name"]
             ))
             conn.commit()
             conn.close()
@@ -545,7 +482,7 @@ while True:
             question = add.pop(-1)
             date_time = add.pop(-1)
 
-            scalar_fields = ["powers", "tens", "negs", "tuh", "bonus_ans", "bonus_heard"]
+            scalar_fields = ["bonus_ans", "bonus_heard"]
             json_array_fields = ["lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash"]
 
             if field not in scalar_fields and field != "lightning" and field not in json_array_fields:
@@ -566,7 +503,7 @@ while True:
                 if not _is_num_list(value, 3):
                     server_socket.sendto(b"error", addr)
                     continue
-            else:  # json_array_fields
+            else:
                 if not _is_num_list(value, 4):
                     server_socket.sendto(b"error", addr)
                     continue
@@ -575,7 +512,7 @@ while True:
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
 
-            c.execute("SELECT * FROM players WHERE username = ?", (username,))
+            c.execute("SELECT username FROM players WHERE username = ?", (username,))
             player_row = c.fetchone()
             if player_row is None:
                 conn.close()
@@ -590,27 +527,79 @@ while True:
                 arr["player_data"].append({"question_data": add, "question_num": question, "team": team})
                 c.execute("UPDATE games SET data = ? WHERE date = ?", (json.dumps(arr), date_time))
 
-            if field in scalar_fields:
-                c.execute(f"UPDATE players SET {field} = {field} + ? WHERE username = ?", (value, username))
-            elif field == "lightning":
-                arr = json.loads(player_row["lightning"])
-                arr[0] += value[0]
-                arr[1] += value[1]
-                arr[2] += value[2]
-                c.execute("UPDATE players SET lightning = ? WHERE username = ?", (json.dumps(arr), username))
-            else:  # json_array_fields
-                arr = json.loads(player_row[field])
-                arr[0] += value[0]
-                arr[1] += value[1]
-                arr[2] += value[2]
-                arr[3] += value[3]
-                c.execute(f"UPDATE players SET {field} = ? WHERE username = ?", (json.dumps(arr), username))
-
             conn.commit()
             conn.close()
             conn = None
             processed_ids[payload["game_id"]].add(req_id)
             server_socket.sendto("pass".encode(), addr)
+        except Exception:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            server_socket.sendto(b"error", addr)
+            continue
+    elif code == "CHNME":
+        conn = None
+        try:
+            try:
+                payload = json.loads(data)
+                old_username = payload["old_username"]
+                new_username = payload["new_username"]
+                first_name = payload["first_name"]
+                last_name = payload["last_name"]
+            except (json.JSONDecodeError, KeyError, TypeError):
+                server_socket.sendto(b"error", addr)
+                continue
+
+            conn = sqlite3.connect("players.db")
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+
+            c.execute("SELECT username FROM players WHERE username = ?", (old_username,))
+            if c.fetchone() is None:
+                conn.close()
+                conn = None
+                server_socket.sendto(b"notfound", addr)
+                continue
+
+            if new_username != old_username:
+                c.execute("SELECT username FROM players WHERE username = ?", (new_username,))
+                if c.fetchone() is not None:
+                    conn.close()
+                    conn = None
+                    server_socket.sendto(b"exists", addr)
+                    continue
+
+            c.execute(
+                "UPDATE players SET username = ?, first_name = ?, last_name = ? WHERE username = ?",
+                (new_username, first_name, last_name, old_username),
+            )
+
+            if new_username != old_username:
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS games (
+                        date TEXT PRIMARY KEY,
+                        data TEXT NOT NULL
+                    )
+                """)
+                c.execute("SELECT date, data FROM games")
+                for game in c.fetchall():
+                    arr = json.loads(game["data"])
+                    changed = False
+                    for entry in arr.get("player_data", []):
+                        question_data = entry.get("question_data")
+                        if question_data and question_data[0] == old_username:
+                            question_data[0] = new_username
+                            changed = True
+                    if changed:
+                        c.execute("UPDATE games SET data = ? WHERE date = ?", (json.dumps(arr), game["date"]))
+
+            conn.commit()
+            conn.close()
+            conn = None
+            server_socket.sendto(b"pass", addr)
         except Exception:
             if conn is not None:
                 try:

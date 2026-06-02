@@ -377,21 +377,18 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB):
                         continue
                     break
                 if finalType == 1:
-                    queue_change([playerId, "powers", 1, game_date_time, tossup, "a" if playerId in teamA else "b"])
                     queue_change([playerId, category, [1, 0, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] += 15
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 15"]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 10**6]]))
                 elif finalType == 2:
-                    queue_change([playerId, "tens", 1, game_date_time, tossup, "a" if playerId in teamA else "b"])
                     queue_change([playerId, category, [0, 1, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] += 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 10"]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 10**6]]))
                 elif finalType == 3:
-                    queue_change([playerId, "negs", 1, game_date_time, tossup, "a" if playerId in teamA else "b"])
                     queue_change([playerId, category, [0, 0, 1, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] -= 5
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
@@ -415,7 +412,6 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB):
                     break
             for i, dict in enumerate(rows):
                 if (dict["username"] in teamA or dict["username"] in teamB):
-                    queue_change([dict["username"], "tuh", 1, game_date_time, tossup, "a" if dict["username"] in teamA else "b"])
                     queue_change([dict["username"], category, [0, 0, 0, 1], game_date_time, tossup, "a" if dict["username"] in teamA else "b"])
             if bonus:
                 for i in range(3):
@@ -703,9 +699,76 @@ def sendMessage(message: str, repeat = 1, timeout = 2.0):
             if client_socket:
                 client_socket.close()
     return "TIMEOUT"
+
+def renamePlayer(rows):
+    all_users = [player["username"] for player in rows]
+    if not all_users:
+        print("There are no players in the database to rename.")
+        return
+
+    full_name_list = {}
+    for player in rows:
+        full_name_list[player["username"]] = BLUE + player["first_name"] + " " + player["last_name"] + RESET
+
+    # 1. Choose the player to rename.
+    while True:
+        target = input(f"Enter the {GREEN}username{RESET} of the player to rename, or \"c\" to cancel: ").lower().strip()
+        if target == "c":
+            return
+        if target in all_users:
+            confirm = input(f"{GREEN}Confirm{RESET} that you want to rename " + full_name_list[target] + " (y or n): ").lower().strip()
+            if confirm == "y":
+                break
+            else:
+                continue
+        print("That username is not in the database.")
+
+    current = next(player for player in rows if player["username"] == target)
+
+    # 2. New username — must be unique unless it is left unchanged.
+    while True:
+        new_username = input(f"Enter the {GREEN}new username{RESET} (or press enter to keep \"" + target + "\"): ").lower().strip()
+        if new_username == "":
+            new_username = target
+        if new_username != target and new_username in all_users:
+            print("That username already exists. Choose a different one.")
+            continue
+        if len(new_username) < 3:
+            print("Usernames must be 3 characters or longer.")
+            continue
+        break
+
+    # 3. New first / last name — press enter to keep the current value.
+    first_name = input(f"Enter the {GREEN}new first name{RESET} (or press enter to keep \"" + current["first_name"] + "\"): ").strip()
+    if first_name == "":
+        first_name = current["first_name"]
+    last_name = input(f"Enter the {GREEN}new last name{RESET} (or press enter to keep \"" + current["last_name"] + "\"): ").strip()
+    if last_name == "":
+        last_name = current["last_name"]
+
+    # 4. Send the change to the server.
+    response = sendMessage("CHNME" + json.dumps({
+        "old_username": target,
+        "new_username": new_username,
+        "first_name": first_name,
+        "last_name": last_name,
+    }))
+
+    if response == "pass":
+        current["username"] = new_username
+        current["first_name"] = first_name
+        current["last_name"] = last_name
+        print(BLUE + first_name + " " + last_name + RESET + " has been updated.")
+    elif response == "exists":
+        print("That username already exists on the server. No changes were made.")
+    elif response == "notfound":
+        print("That player no longer exists on the server. No changes were made.")
+    else:
+        print(f"Could not reach the server or an error occurred. {GREEN}Try again{RESET}.")
+
 name_rows = []
 
-fieldnames = ["username", "first_name", "last_name", "tuh", "powers", "tens", "negs", "lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash", "lightning"]
+fieldnames = ["username", "first_name", "last_name", "lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash", "lightning"]
 
 try:
     if scriptRunning:
@@ -747,7 +810,8 @@ try:
     while scriptRunning:
         print("Select a command: ")
         print(f"\t{RED}1.{RESET} Start Game")
-        print(f"\t{RED}2.{RESET} Close")
+        print(f"\t{RED}2.{RESET} Rename Player")
+        print(f"\t{RED}3.{RESET} Close")
         while True:
             selection = input("Selection: ").strip()
             if selection == "1":
@@ -852,8 +916,13 @@ try:
                 questionTracker(name_rows, tossups, lightnings, teamA, teamB)
                 input(f"Press {GREEN}enter{RESET} to continue.")
                 break
-            
+
             elif selection == "2":
+                renamePlayer(name_rows)
+                input(f"Press {GREEN}enter{RESET} to continue.")
+                break
+
+            elif selection == "3":
                 scriptRunning = False
                 break
             else:

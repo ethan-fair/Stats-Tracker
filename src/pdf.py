@@ -39,17 +39,10 @@ PAGE_MARGIN = 0.6 * inch
 def get_names():
     conn = sqlite3.connect("players.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT username FROM players")
-    usernames = [row[0] for row in cursor.fetchall()]
-    cursor.execute("SELECT first_name FROM players")
-    first_names = [row[0] for row in cursor.fetchall()]
-    cursor.execute("SELECT last_name FROM players")
-    last_names = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT username, first_name, last_name FROM players")
+    rows = cursor.fetchall()
     conn.close()
-    name_list = {}
-    for i in range(len(usernames)):
-        name_list[usernames[i]] = first_names[i] + " " + last_names[i]
-    return name_list
+    return {row[0]: row[1] + " " + row[2] for row in rows}
 
 
 # ---------- paragraph styles ----------
@@ -129,8 +122,12 @@ def _fig_to_image(fig, width):
     return Image(buf, width=width, height=width * h / w)
 
 
-def _running_score_chart(rounds, width):
-    """Line chart: running totals for both teams across rounds."""
+def _running_score_chart(rounds, width, split_x=None):
+    """Line chart: running totals for both teams across rounds.
+
+    If split_x is given, a dashed vertical divider is drawn there to separate
+    the tossup and lightning phases (used by the full-game chart).
+    """
     fig, ax = plt.subplots(figsize=(7.2, 2.6))
     xs = [r for r in rounds]
     a = [rounds[r]["a"] for r in rounds]
@@ -144,13 +141,26 @@ def _running_score_chart(rounds, width):
                     color="#1F6FEB", alpha=0.06, interpolate=True)
     ax.fill_between(xs, a, b, where=[ai < bi for ai, bi in zip(a, b)],
                     color="#C62828", alpha=0.06, interpolate=True)
-    ax.set_xlabel("Tossup", fontsize=8, color="#6B6B6B")
+    ax.set_xlabel("Question", fontsize=8, color="#6B6B6B")
     ax.set_ylabel("Running Score", fontsize=8, color="#6B6B6B")
-    ax.set_xticks(range(0, max(xs) + 1))
+    ticks = list(range(0, max(xs) + 1))
+    ax.set_xticks(ticks)
+    ax.set_xlim(0, max(xs))  # align x=0 with the y-axis (no left padding)
+    if split_x is not None:
+        # restart the question count at 1 for the lightning phase past the divider
+        boundary = int(split_x)
+        ax.set_xticklabels([str(t if t <= boundary else t - boundary) for t in ticks])
     ax.grid(True, axis="y", lw=0.4, color="#E5E5E5")
     for sp in ("top", "right"): ax.spines[sp].set_visible(False)
     ax.spines["left"].set_color("#D9D9D9"); ax.spines["bottom"].set_color("#D9D9D9")
     ax.tick_params(colors="#6B6B6B", labelsize=8)
+    if split_x is not None:
+        ax.axvline(split_x, color="#6B6B6B", lw=0.9, ls=(0, (4, 3)), alpha=0.8, zorder=3)
+        ymax = ax.get_ylim()[1]
+        ax.text(split_x - 0.2, ymax, "Tossups", ha="right", va="top",
+                fontsize=7, color="#6B6B6B")
+        ax.text(split_x + 0.2, ymax, "Lightning", ha="left", va="top",
+                fontsize=7, color="#6B6B6B")
     ax.legend(loc="upper left", frameon=False, fontsize=8)
     return _fig_to_image(fig, width)
 
@@ -171,7 +181,7 @@ def _header_block(packet, date, styles, width):
     title = Paragraph(f"{datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").strftime("%B %d, %Y")}",
                       styles["h1"])
     return [eb, Spacer(1, 2), title, Spacer(1, 2), Spacer(1, 6),
-            HLine(width, INK, 1.2), Spacer(1, 10)]
+            HLine(width, INK, 1.2)]
 
 
 # ---------- summary strip ----------
@@ -259,27 +269,25 @@ def _player_table(team, styles, width):
             players[data[0]] = [[data[1], data[2]]]
     categories = ["lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash"]
     max_tuh = 0
+    distrs = {}
     for p in players:
         point_distr = {
             "powers": sum([players[p][index][1][0] if players[p][index][0] in categories else 0 for index in range(len(players[p]))]),
             "tens": sum([players[p][index][1][1] if players[p][index][0] in categories else 0 for index in range(len(players[p]))]),
             "negs": sum([players[p][index][1][2] if players[p][index][0] in categories else 0 for index in range(len(players[p]))]),
-            "tuh": sum([players[p][index][1][3] if players[p][index][0] in categories else 0 for index in range(len(players[p]))])  
+            "tuh": sum([players[p][index][1][3] if players[p][index][0] in categories else 0 for index in range(len(players[p]))])
         }
+        distrs[p] = point_distr
         if point_distr["tuh"] > max_tuh:
             max_tuh = point_distr["tuh"]
-    
+
+    names = get_names()
     for p in players:
-        point_distr = {
-            "powers": sum([players[p][index][1][0] if players[p][index][0] in categories else 0 for index in range(len(players[p]))]),
-            "tens": sum([players[p][index][1][1] if players[p][index][0] in categories else 0 for index in range(len(players[p]))]),
-            "negs": sum([players[p][index][1][2] if players[p][index][0] in categories else 0 for index in range(len(players[p]))]),
-            "tuh": sum([players[p][index][1][3] if players[p][index][0] in categories else 0 for index in range(len(players[p]))])  
-        }
+        point_distr = distrs[p]
         segs = [(point_distr["powers"], POWER), (point_distr["tens"], GET),
                 (point_distr["negs"], NEG), (max_tuh - (point_distr["powers"] + point_distr["tens"] + point_distr["negs"]), NEUTRAL)]
         name = Paragraph(
-            f"<b>{get_names()[p]}</b><br/>",
+            f"<b>{names[p]}</b><br/>",
             styles["base"])
         rows.append([name, str(point_distr["powers"] * 15 + point_distr["tens"] * 10 + point_distr["negs"] * -5),
                      StackedBar(width * 0.4, 10, segs)])
@@ -306,6 +314,59 @@ def _team_block(team, styles, width):
         Spacer(1, 10),
     ]
 
+def _player_table_lightning(team, styles, width):
+    rows = [["PLAYER", "PTS", "LIGHTNING OUTCOME DISTRIBUTION"]]
+    players = {}
+    for data in team:
+        if data[0] in players.keys():
+            players[data[0]].append([data[1], data[2]])
+        else:
+            players[data[0]] = [[data[1], data[2]]]
+    max_tuh = 0
+    distrs = {}
+    for p in players:
+        point_distr = {
+            "tens": sum([players[p][index][1][0] if players[p][index][0] == "lightning" else 0 for index in range(len(players[p]))]),
+            "negs": sum([players[p][index][1][1] if players[p][index][0] == "lightning" else 0 for index in range(len(players[p]))]),
+            "tuh": sum([players[p][index][1][2] if players[p][index][0] == "lightning" else 0 for index in range(len(players[p]))])
+        }
+        distrs[p] = point_distr
+        if point_distr["tuh"] > max_tuh:
+            max_tuh = point_distr["tuh"]
+
+    names = get_names()
+    for p in players:
+        point_distr = distrs[p]
+        segs = [(point_distr["tens"], GET),
+                (point_distr["negs"], NEG), (max_tuh - (point_distr["tens"] + point_distr["negs"]), NEUTRAL)]
+        name = Paragraph(
+            f"<b>{names[p]}</b><br/>",
+            styles["base"])
+        rows.append([name, str(point_distr["tens"] * 10 + point_distr["negs"] * -10),
+                     StackedBar(width * 0.4, 10, segs)])
+    cw = [0.22, 0.08, 0.45, 0.25]
+    t = Table(rows, colWidths=[c * width for c in cw])
+    t.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7),
+        ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.8, INK),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LINEBELOW", (0, 1), (-1, -2), 0.25, RULE),
+        ("FONT", (1, 1), (1, -1), "Helvetica-Bold", 11),
+    ]))
+    return t
+
+
+def _team_block_lightning(team, styles, width):
+    return [
+        Spacer(1, 4),
+        _player_table_lightning(team, styles, width),
+        Spacer(1, 10),
+    ]
+
 
 # ---------- bonus conversion (match report) ----------
 def _bonus_table(bonus_data, styles, width):
@@ -322,6 +383,40 @@ def _bonus_table(bonus_data, styles, width):
             Paragraph(f"<b>{label}</b>", styles["base"]),
             str(ans), str(heard),
             f"{conv:.1f}%", f"{pp3bh:.1f}",
+            Slider(width * 0.22, 10, conv, _bonus_color(conv)),
+        ])
+    cw = [0.22, 0.13, 0.13, 0.15, 0.12, 0.25]
+    t = Table(rows, colWidths=[c * width for c in cw])
+    t.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7),
+        ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.8, INK),
+        ("LINEBELOW", (0, 1), (-1, -2), 0.25, RULE),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, PAPER]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (1, 0), (-2, -1), "CENTER"),
+        ("ALIGN", (-1, 0), (-1, -1), "LEFT"),
+        ("FONT", (1, 1), (-2, -1), "Helvetica-Bold", 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    return t
+
+
+# ---------- lightning conversion (match report) ----------
+def _lightning_table(lightning_team_data, styles, width):
+    """Lightning conversion line for both teams: correct / incorrect / heard / conversion.
+
+    lightning_team_data: {"a": [correct, incorrect, heard], "b": [correct, incorrect, heard]}
+    """
+    rows = [["TEAM", "CORRECT", "INCORRECT", "HEARD", "CONVERSION", "RATE"]]
+    for team, label in (("a", "Team A"), ("b", "Team B")):
+        correct, incorrect, heard = lightning_team_data[team][0], lightning_team_data[team][1], lightning_team_data[team][2]
+        conv = correct / heard * 100 if heard > 0 else 0
+        rows.append([
+            Paragraph(f"<b>{label}</b>", styles["base"]),
+            str(correct), str(incorrect), str(heard),
+            f"{conv:.1f}%",
             Slider(width * 0.22, 10, conv, _bonus_color(conv)),
         ])
     cw = [0.22, 0.13, 0.13, 0.15, 0.12, 0.25]
@@ -396,6 +491,8 @@ def generate_match_report(date, out_path = None):
     game_data = []
     round_data = {0: {"a": 0, "b": 0}}
     bonus_data = {"a": [0, 0], "b": [0, 0]}
+    lightning_team_data = {"a": [0, 0, 0], "b": [0, 0, 0]}
+    has_tossup = False
     teamA = []
     teamB = []
 
@@ -405,14 +502,19 @@ def generate_match_report(date, out_path = None):
             game_data = rows[i]["data"]
             break
 
+    if not game_data:
+        return None
+
     game_data["player_data"].sort(key = lambda x: x["question_num"])
 
     categories = ["lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash"]
 
     for i in game_data["player_data"]:
-        if not i["question_num"] in round_data.keys():
+        if not i["question_num"] in round_data.keys() and i["question_data"][1] != "lightning":
             round_data[i["question_num"]] = {"a": round_data[i["question_num"] - 1]["a"] if i["question_num"] - 1 in round_data.keys() else 0, "b": round_data[i["question_num"] - 1]["b"] if i["question_num"] - 1 in round_data.keys() else 0}
         team = i["team"]
+        if i["question_data"][1] != "lightning":
+            has_tossup = True
         if i["question_data"][1] in categories:
             round_data[i["question_num"]][team] += 15 * i["question_data"][2][0]
             round_data[i["question_num"]][team] += 10 * i["question_data"][2][1]
@@ -420,14 +522,32 @@ def generate_match_report(date, out_path = None):
         if i["question_data"][1] == "bonus_ans":
             round_data[i["question_num"]][team] += 10
             bonus_data[team][0] += 1
-        if i["question_data"][1] == "lightning":
-            round_data[i["question_num"]][team] += 10 * i["question_data"][2][0]
-            round_data[i["question_num"]][team] -= 10 * i["question_data"][2][1]
         if i["question_data"][1] == "bonus_heard":
             bonus_data[team][1] += 1
+    max_index = max(round_data.keys())
+    lightning_data = {0: {"a": round_data[max_index]["a"], "b": round_data[max_index]["b"]}}
+    has_lightning = False
+    for i in game_data["player_data"]:
+        if i["question_data"][1] == "lightning":
+            team = i["team"]
+            if not i["question_num"] in lightning_data.keys():
+                lightning_data[i["question_num"]] = {"a": lightning_data[i["question_num"] - 1]["a"] if i["question_num"] - 1 in lightning_data.keys() else 0, "b": lightning_data[i["question_num"] - 1]["b"] if i["question_num"] - 1 in lightning_data.keys() else 0}
+            lightning_data[i["question_num"]][team] += 10 * i["question_data"][2][0]
+            lightning_data[i["question_num"]][team] -= 10 * i["question_data"][2][1]
+            lightning_team_data[team][0] += i["question_data"][2][0]
+            lightning_team_data[team][1] += i["question_data"][2][1]
+            lightning_team_data[team][2] += i["question_data"][2][2]
+            has_lightning = True
 
-    if not game_data:
-        return None
+    # full-game running score: tossups, then lightning continued from the tossup
+    # final. Lightning is re-indexed to start at 1 right after the last tossup, so
+    # its counter is independent of the raw lightning question numbers.
+    full_data = {}
+    for k in sorted(round_data.keys()):
+        full_data[k] = round_data[k]
+    lightning_keys = sorted(k for k in lightning_data.keys() if k != 0)
+    for offset, k in enumerate(lightning_keys, start=1):
+        full_data[max_index + offset] = lightning_data[k]
 
     for data in game_data["player_data"]:
         if data["team"] == "a":
@@ -444,27 +564,66 @@ def generate_match_report(date, out_path = None):
     story = []
     story += _header_block(game_data["packet"], date, styles, W)
 
-    # player stats
-    #story.append(Paragraph("§ 01 &nbsp; Player lines", styles["h2"]))
-    #story.append(Spacer(1, 8))
-    story.append(Paragraph("T E A M &nbsp; A", styles["eyebrow"]))
-    story.append(Spacer(1, 4))
-    story += _team_block(teamA, styles, W)
-    story.append(HLine(W, INK, 1.2))
-    story.append(Spacer(1, 8))
-    story.append(Paragraph("T E A M &nbsp; B", styles["eyebrow"]))
-    story.append(Spacer(1, 4))
-    story += _team_block(teamB, styles, W)
-    story.append(HLine(W, INK, 1.2))
-    story.append(Spacer(1, 8))
+    section = 0
 
-    # bonus conversion (both teams)
-    story.append(Paragraph("B O N U S &nbsp; C O N V E R S I O N", styles["eyebrow"]))
-    story.append(Spacer(1, 4))
-    story.append(_bonus_table(bonus_data, styles, W))
-    story.append(Spacer(1, 12))
+    # tossup stats (only if tossup data exists)
+    if has_tossup:
+        section += 1
+        story.append(Paragraph(f"§ {section:02d} &nbsp; Tossup data", styles["h2"]))
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("T E A M &nbsp; A", styles["eyebrow"]))
+        story.append(Spacer(1, 4))
+        story += _team_block(teamA, styles, W)
+        #story.append(HLine(W, INK, 1.2))
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("T E A M &nbsp; B", styles["eyebrow"]))
+        story.append(Spacer(1, 4))
+        story += _team_block(teamB, styles, W)
+        #story.append(HLine(W, INK, 1.2))
+        story.append(Spacer(1, 8))
 
-    story.append(_running_score_chart(round_data, W))
+        # bonus conversion (both teams)
+        story.append(Paragraph("B O N U S &nbsp; C O N V E R S I O N", styles["eyebrow"]))
+        story.append(Spacer(1, 4))
+        story.append(_bonus_table(bonus_data, styles, W))
+        story.append(Spacer(1, 12))
+        story.append(Paragraph("T O S S U P &nbsp; C H A R T", styles["eyebrow"]))
+        story.append(_running_score_chart(round_data, W))
+
+    # lightning stats (only if lightning data exists)
+    if has_lightning:
+        if has_tossup:
+            story.append(PageBreak())
+        section += 1
+        story.append(Paragraph(f"§ {section:02d} &nbsp; Lightning data", styles["h2"]))
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("T E A M &nbsp; A", styles["eyebrow"]))
+        story.append(Spacer(1, 4))
+        story += _team_block_lightning(teamA, styles, W)
+        #story.append(HLine(W, INK, 1.2))
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("T E A M &nbsp; B", styles["eyebrow"]))
+        story.append(Spacer(1, 4))
+        story += _team_block_lightning(teamB, styles, W)
+        #story.append(HLine(W, INK, 1.2))
+        story.append(Spacer(1, 8))
+
+        # lightning conversion (both teams)
+        story.append(Paragraph("L I G H T N I N G &nbsp; C O N V E R S I O N", styles["eyebrow"]))
+        story.append(Spacer(1, 4))
+        story.append(_lightning_table(lightning_team_data, styles, W))
+        story.append(Spacer(1, 12))
+        story.append(Paragraph("L I G H T N I N G &nbsp; C H A R T", styles["eyebrow"]))
+        story.append(_running_score_chart(lightning_data, W))
+
+    # full game chart (only when the match has both tossup and lightning phases)
+    if has_tossup and has_lightning:
+        story.append(PageBreak())
+        section += 1
+        story.append(Paragraph(f"§ {section:02d} &nbsp; Full game", styles["h2"]))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph("F U L L &nbsp; G A M E &nbsp; C H A R T", styles["eyebrow"]))
+        story.append(_running_score_chart(full_data, W, split_x=max_index + 0.5))
 
     doc.build(story)
     buf.seek(0)
@@ -578,6 +737,9 @@ def generate_player_report(player, games, out_path = None):
                 if stat["question_data"][0] == player:
                     player_data.append([stat["question_data"][1], stat["question_data"][2]])
 
+    if not player_data:
+        return None
+
     styles = _styles()
     buf = BytesIO()
     doc = SimpleDocTemplate(out_path or buf, pagesize=LETTER,
@@ -599,22 +761,7 @@ def generate_player_report(player, games, out_path = None):
             CREATE TABLE IF NOT EXISTS players (
                 username TEXT PRIMARY KEY,
                 first_name TEXT NOT NULL,
-                last_name TEXT NOT NULL,
-                tuh INTEGER DEFAULT 0,
-                powers INTEGER DEFAULT 0,
-                tens INTEGER DEFAULT 0,
-                negs INTEGER DEFAULT 0,
-                lit TEXT NOT NULL,
-                history TEXT NOT NULL,
-                science TEXT NOT NULL,
-                fine_arts TEXT NOT NULL,
-                geography TEXT NOT NULL,
-                current_events TEXT NOT NULL,
-                rmpss TEXT NOT NULL,
-                trash TEXT NOT NULL,
-                lightning TEXT NOT NULL,
-                bonus_ans INTEGER DEFAULT 0,
-                bonus_heard INTEGER DEFAULT 0
+                last_name TEXT NOT NULL
             )
         """)
         conn.commit()
@@ -762,106 +909,7 @@ def generate_player_report(player, games, out_path = None):
     buf.seek(0)
     return out_path if out_path else buf
 
-
-# ---------- demo / self-test ----------
 if __name__ == "__main__":
-    # Sample data derived from design reference
-    rounds = [
-        (1,"LITERATURE","Virginia Woolf",15,0,"20/30",35,0),
-        (2,"HISTORY","Treaty of Westphalia",0,10,"30/30",35,40),
-        (3,"SCIENCE","Enzyme kinetics",10,-5,"20/30",65,35),
-        (4,"FINE ARTS","Caravaggio",0,0,"—",65,35),
-        (5,"GEOGRAPHY","Caspian basin",15,0,"10/30",90,35),
-        (6,"LITERATURE","Borges",-5,10,"20/30",85,65),
-        (7,"MATH","Galois theory",0,15,"30/30",85,110),
-        (8,"HISTORY","Meiji Restoration",10,0,"20/30",115,110),
-        (9,"SCIENCE","Mitochondria",10,0,"30/30",155,110),
-        (10,"POP CULTURE","Kurosawa films",0,10,"10/30",155,130),
-        (11,"LITERATURE","Toni Morrison",15,-5,"20/30",190,125),
-        (12,"MYTH","Norse cosmology",0,10,"20/30",190,155),
-        (13,"SCIENCE","Titration",10,0,"10/30",210,155),
-        (14,"HISTORY","Ottoman fall",0,10,"20/30",210,185),
-        (15,"FINE ARTS","Debussy",10,0,"20/30",240,185),
-        (16,"LITERATURE","Chekhov",15,0,"30/30",285,185),
-        (17,"MATH","Topology",-5,0,"—",280,185),
-        (18,"HISTORY","Deng Xiaoping",0,15,"20/30",280,220),
-        (19,"GEOGRAPHY","Andean watersheds",10,0,"20/30",310,220),
-        (20,"SCIENCE","Redshift",-5,10,"10/30",305,240),
-    ]
-    round_data = [
-        {"tu": r[0], "category": r[1], "subject": r[2],
-         "a_buzz": r[3], "b_buzz": r[4], "bonus": r[5],
-         "a_total": r[6], "b_total": r[7], "margin": r[6] - r[7],
-         "a_name": "Westbrook", "b_name": "Hartfield"}
-        for r in rounds
-    ]
-    match_data = {
-        "match_no": "0428", "date": "Saturday, April 18, 2026",
-        "venue": "Room 211", "moderator": "L. Suárez",
-        "team_a": {
-            "name": "Stanton", "seed": 3, "record": "11–2",
-            "nickname": "The Lanterns", "score": 305, "captain": "M. Okafor",
-            "players": [
-                {"name": "M. Okafor", "class": "Sr.", "points": 85,
-                 "powers": 4, "gets": 3, "negs": 1, "no_buzz": 12,
-                 "top_cats": [("LITERATURE", 4), ("HISTORY", 2), ("SCIENCE", 1)]},
-                {"name": "J. Halvorsen", "class": "Jr.", "points": 50,
-                 "powers": 2, "gets": 2, "negs": 0, "no_buzz": 16,
-                 "top_cats": [("SCIENCE", 3), ("MATH", 1)]},
-                {"name": "P. Aranda", "class": "So.", "points": 30,
-                 "powers": 0, "gets": 2, "negs": 0, "no_buzz": 18,
-                 "top_cats": [("FINE ARTS", 2), ("GEOGRAPHY", 1)]},
-                {"name": "R. Chen", "class": "Fr.", "points": 25,
-                 "powers": 0, "gets": 0, "negs": 0, "no_buzz": 20,
-                 "top_cats": [("POP CULTURE", 1), ("MYTH", 1)]},
-            ],
-        },
-        "team_b": {
-            "name": "Hartfield College", "seed": 6, "record": "10–3",
-            "nickname": "The Scholars", "score": 240, "captain": "D. Vitale",
-            "players": [
-                {"name": "D. Vitale", "class": "Sr.", "points": 55,
-                 "powers": 3, "gets": 2, "negs": 2, "no_buzz": 13,
-                 "top_cats": [("HISTORY", 3), ("LITERATURE", 2)]},
-                {"name": "S. Park", "class": "Sr.", "points": 55,
-                 "powers": 2, "gets": 3, "negs": 0, "no_buzz": 15,
-                 "top_cats": [("SCIENCE", 3), ("MATH", 2)]},
-                {"name": "A. Reyes-Linde", "class": "Jr.", "points": 25,
-                 "powers": 0, "gets": 1, "negs": 0, "no_buzz": 19,
-                 "top_cats": [("FINE ARTS", 1), ("MYTH", 1)]},
-                {"name": "K. Brzezinski", "class": "So.", "points": 10,
-                 "powers": 0, "gets": 0, "negs": 0, "no_buzz": 20,
-                 "top_cats": [("POP CULTURE", 1)]},
-            ],
-        },
-        "rounds": round_data,
-    }
-
-    player_data = {
-        "match_no": "0428", "date": "Saturday, April 18, 2026",
-        "venue": "Room 211",
-        "player": {"name": "M. Okafor", "class": "Sr.",
-                   "team": "Westbrook Academy",
-                   "nickname": "The Lanterns", "captain": True},
-        "totals": {"points": 85, "powers": 4, "gets": 3, "negs": 1,
-                   "no_buzz": 12, "ppg": 21.3, "buzz_rate_pct": 40},
-        "categories": [
-            {"name": "Literature", "n": 4, "pct": 100, "points": 60},
-            {"name": "History", "n": 4, "pct": 50, "points": 20},
-            {"name": "Science", "n": 4, "pct": 25, "points": 10},
-            {"name": "Geography", "n": 2, "pct": 50, "points": 15},
-            {"name": "Fine Arts", "n": 2, "pct": 0, "points": 0},
-            {"name": "Math", "n": 2, "pct": 0, "points": -5},
-            {"name": "Myth", "n": 1, "pct": 0, "points": 0},
-            {"name": "Pop Culture", "n": 1, "pct": 0, "points": 0},
-        ],
-        "recent_matches": [
-            {"opp": "Hartfield College", "score": "305–240", "pts": 85, "powers": 4},
-            {"opp": "Ridgemont Prep", "score": "280–195", "pts": 70, "powers": 3},
-            {"opp": "Ashford Latin", "score": "320–275", "pts": 65, "powers": 2},
-        ],
-    }
-
-    generate_match_report('May 05, 2026, 02:00 PM', "match_report.pdf")
-    #generate_player_report("ethanf", ['May 02, 2026, 06:17 PM', 'May 02, 2026, 07:32 AM'], "player_report.pdf")
+    generate_match_report("May 31, 2026, 04:29:56.047386 PM", "match_report.pdf")
+    generate_player_report("ethanf", ["May 31, 2026, 04:29:56.047386 PM"], "player_report.pdf")
     print("OK")
