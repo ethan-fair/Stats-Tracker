@@ -77,6 +77,16 @@ def get_names():
         name_list[usernames[i]] = first_names[i] + " " + last_names[i]
     return name_list
 
+def get_name(username):
+    """Look up a player's display name, tolerating case differences between the
+    entered username and the one stored in the database. Falls back to the
+    username itself if no matching player is found."""
+    names = get_names()
+    if username in names:
+        return names[username]
+    lowered = {k.lower(): v for k, v in names.items()}
+    return lowered.get(username.lower(), username)
+
 # ──────────────────────────────────────────────────────────────
 # DATE PARSING HELPER
 # ──────────────────────────────────────────────────────────────
@@ -130,7 +140,7 @@ class SingleDateModal(Modal, title="Enter Date"):
             pdf_buffer = pdf.generate_player_report(self.username, dates_to_use)
 
             await interaction.response.send_message(
-                f"Here is your **Single Date** report ({date_info}), {get_names()[self.username]}!",
+                f"Here is your **Single Date** report ({date_info}), {get_name(self.username)}!",
                 file=discord.File(pdf_buffer, filename=self.username + ".pdf"),
                 ephemeral=True,
             )
@@ -201,7 +211,7 @@ class DateRangeModal(Modal, title="Enter Date Range"):
             pdf_buffer = pdf.generate_player_report(self.username, dates_to_use)
 
             await interaction.response.send_message(
-                f"Here is your **Date Range** report ({date_info}), {get_names()[self.username]}!",
+                f"Here is your **Date Range** report ({date_info}), {get_name(self.username)}!",
                 file=discord.File(pdf_buffer, filename=self.username + ".pdf"),
                 ephemeral=True,
             )
@@ -256,7 +266,7 @@ class ReportTypeView(View):
                 pdf_buffer = pdf.generate_player_report(self.username, get_dates())
 
                 await interaction.followup.send(
-                    f"Here is your **All Time** report, {get_names()[self.username]}!",
+                    f"Here is your **All Time** report, {get_name(self.username)}!",
                     file=discord.File(pdf_buffer, filename=self.username + ".pdf"),
                     ephemeral=True,
                 )
@@ -298,7 +308,7 @@ class UsernameModal(Modal, title="Username"):
 
         report_view = ReportTypeView(username=entered)
         await interaction.response.send_message(
-            f"Welcome, **{get_names()[entered]}**! Please choose a report type:",
+            f"Welcome, **{get_name(entered)}**! Please choose a report type:",
             view=report_view,
             ephemeral=True,
         )
@@ -372,7 +382,7 @@ def get_all_games() -> list[str]:
     return_games = {}
     for i in range(len(dates)):
         date = dates[i]
-        dates[i] = datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").strftime("%a %b %d, %Y") + " - " + games[dates[i]]["name"]
+        dates[i] = datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").strftime("%a %b %d, %I:%M %p, %Y") + " - " + games[dates[i]]["name"]
         return_games[dates[i]] = date
     #print(return_games)
     return dates, return_games
@@ -422,7 +432,7 @@ async def game_autocomplete(
 @client.event
 async def on_ready():
     await tree.sync()          # registers slash commands globally (can take ~1 hr to propagate)
-    print(f"Logged in as {client.user} — /stats command is live!")
+    print(f"Logged in as {client.user}, fully synced.")
 
 
 # ──────────────────────────────────────────────────────────────

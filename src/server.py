@@ -23,8 +23,6 @@ game_list = {}
 
 last_cleared_date = None
 
-processed_ids = {}
-
 while True:
     current_time = time.time()
     to_remove = []
@@ -41,7 +39,6 @@ while True:
         del game_list[key]
         if x["game_id"] in num_list:
             num_list.remove(x["game_id"])
-        processed_ids.pop(x["game_id"], None)
 
     try:
         data, addr = server_socket.recvfrom(4096)
@@ -127,7 +124,6 @@ while True:
                 continue
             if num in num_list:
                 num_list.remove(num)
-                processed_ids.pop(num, None)
             for i in item["scoreboards"]:
                 server_socket.sendto(b"CLOSED", i)
             server_socket.sendto(b"pass", addr)
@@ -277,7 +273,6 @@ while True:
             "game_logs": {}
         }
         num_list.append(num)
-        processed_ids[num] = set()
         server_socket.sendto(str(num).encode(), addr)
     elif code == "STGME":
         try:
@@ -462,14 +457,6 @@ while True:
 
             req_id = payload["id"]
 
-            if payload["game_id"] not in num_list:
-                server_socket.sendto("error".encode(), addr)
-                continue
-
-            if req_id in processed_ids[payload["game_id"]]:
-                server_socket.sendto("pass".encode(), addr)
-                continue
-
             add = payload["data"]
             if len(add) < 3:
                 server_socket.sendto(b"error", addr)
@@ -512,25 +499,30 @@ while True:
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
 
-            c.execute("SELECT username FROM players WHERE username = ?", (username,))
-            player_row = c.fetchone()
-            if player_row is None:
-                conn.close()
-                conn = None
-                server_socket.sendto(b"error", addr)
-                continue
-
             c.execute("SELECT data FROM games WHERE date = ?", (date_time,))
             row = c.fetchone()
-            if row:
-                arr = json.loads(row["data"])
-                arr["player_data"].append({"question_data": add, "question_num": question, "team": team})
-                c.execute("UPDATE games SET data = ? WHERE date = ?", (json.dumps(arr), date_time))
+            if not row:
+                conn.close()
+                conn = None
+                server_socket.sendto(b"pass", addr)
+                continue
+
+            arr = json.loads(row["data"])
+            applied = arr.setdefault("applied_ids", [])
+
+            if req_id in applied:
+                conn.close()
+                conn = None
+                server_socket.sendto(b"pass", addr)
+                continue
+
+            arr["player_data"].append({"question_data": add, "question_num": question, "team": team})
+            applied.append(req_id)
+            c.execute("UPDATE games SET data = ? WHERE date = ?", (json.dumps(arr), date_time))
 
             conn.commit()
             conn.close()
             conn = None
-            processed_ids[payload["game_id"]].add(req_id)
             server_socket.sendto("pass".encode(), addr)
         except Exception:
             if conn is not None:
