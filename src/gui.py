@@ -87,8 +87,10 @@ class TextBox():
         self.type_speed = 1
 
     def add_line(self, text):
+        # Coerce to str: a player without a username can produce a non-string
+        # (or None) payload, which would otherwise crash font.render().
         new_line = {
-            "full": text,
+            "full": str(text) if text is not None else "",
             "visible": "",
             "progress": 0
         }
@@ -284,8 +286,11 @@ class SeatTracker():
         count = len(self.name_list)
         surface = pygame.Surface((250, 55 * max(count, 1)), pygame.SRCALPHA)
         surface.fill((0, 0, 0, 0))
+        # self.highlighted holds [seat_number, timer] pairs. Seats are matched
+        # by their (1-based) number instead of by username so that players
+        # without a username can still be highlighted. The name, if there is
+        # one, is still drawn next to the highlighted seat below.
         highlighted_list = []
-        remove = []
         for i in range(len(self.highlighted)):
             if self.highlighted[i][1] > 0:
                 highlighted_list.append(self.highlighted[i][0])
@@ -293,7 +298,7 @@ class SeatTracker():
         self.highlighted = [h for h in self.highlighted if h[1] > 0]
 
         for i in range(count):
-            if self.name_list[i] not in highlighted_list:
+            if (i + 1) not in highlighted_list:
                 if self.alignment == "LEFT":
                     pygame.draw.rect(surface, (50, 50, 50), pygame.Rect(0, 55 * i, 50, 50))
                     pygame.draw.rect(surface, (100, 100, 100), pygame.Rect(5, 55 * i + 5, 40, 40))
@@ -394,13 +399,16 @@ while running:
                             teamBSeats.name_list = team.copy()
                             teamBSeats.number = len(team)
                 elif data[0] == "HIGHLIGHT":
-                    h = data[1]
+                    team = data[1]
+                    h = data[2]
                     if (isinstance(h, list) and len(h) == 2
-                            and isinstance(h[0], str)
+                            and isinstance(h[0], int) and not isinstance(h[0], bool)
                             and isinstance(h[1], (int, float))
                             and not isinstance(h[1], bool)):
-                        teamASeats.highlighted.append([h[0], h[1]])
-                        teamBSeats.highlighted.append([h[0], h[1]])
+                        if team == "a":
+                            teamASeats.highlighted.append([h[0], h[1]])
+                        elif team == "b":
+                            teamBSeats.highlighted.append([h[0], h[1]])
                 elif data[0] == "SET_HIGHLIGHT":
                     teamASeats.highlighted, teamBSeats.highlighted = [], []
                 try:

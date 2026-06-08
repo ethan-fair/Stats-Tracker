@@ -136,8 +136,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
             all_users.append(player["username"])
             full_name_list[player["username"]] = BLUE + player["first_name"] + " " + player["last_name"][0] + "." + RESET
             name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
-        #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
-        #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": [name_list[i] for i in teamA], "b": [name_list[i] for i in teamB]}]))
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}]))
         tossup += 1
         category = ""
         while True:
@@ -285,13 +285,13 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                     
                 if team == "a":
                     teamA[index] = id
-                    #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": [name_list[i] for i in teamA]}]))
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" if i.startswith("!") else name_list[i] for i in teamA]}]))
                 elif team == "b":
                     teamB[index] = id
-                    #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": [name_list[i] for i in teamB]}]))
-                print(full_name_list[playerId] + " has been replaced by " + full_name_list[id] + ".") 
-                #sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + " -> " + name_list[id]])) 
-                #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 400]]))
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": ["" if i.startswith("!") else name_list[i] for i in teamB]}]))
+                print(full_name_list[playerId] + " has been replaced by " + full_name_list[id] + ".")
+                sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + " -> " + name_list[id]]))
+                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [index + 1, 400]]))
         else:
             team_a_answer = False
             team_b_answer = False
@@ -365,11 +365,13 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                     if player in teamA:
                         playerId = player
                         team = "a"
+                        seat_num = teamA.index(player) + 1
                         if team_a_answer:
                             return_with_neg_error = True
                     elif player in teamB:
                         playerId = player
                         team = "b"
+                        seat_num = teamB.index(player) + 1
                         if team_b_answer:
                             return_with_neg_error = True
                     else:
@@ -398,20 +400,20 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                     queue_change([playerId, category, [1, 0, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] += 15
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
-                    #sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 15"]))
-                    #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 10**6]]))
+                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 15"]))
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 10**6]]))
                 elif finalType == 2:
                     queue_change([playerId, category, [0, 1, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] += 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
-                    #sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 10"]))
-                    #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 10**6]]))
+                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 10"]))
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 10**6]]))
                 elif finalType == 3:
                     queue_change([playerId, category, [0, 0, 1, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] -= 5
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
-                    #sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": -5"]))
-                    #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 200]]))
+                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": -5"]))
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 200]]))
                     if playerId in teamA:
                         team_a_answer = True
                     elif playerId in teamB:
@@ -421,8 +423,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                         team_a_answer = True
                     elif playerId in teamB:
                         team_b_answer = True
-                    #sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 0"]))
-                    #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 400]]))
+                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 0"]))
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 400]]))
                 if team_a_answer and team_b_answer:
                     bonus = False
                     break
@@ -463,7 +465,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
             elif lightnings > 0:
                 print("Score: " + BLUE + str(score["a"]) + " - " + str(score["b"]) + RESET)
             writeToDatabase()
-            #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
+            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
     while True:
         if lightnings == 0:
             break
@@ -570,13 +572,13 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                 continue
         if team == "a":
             teamA[index] = id
-            #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": [name_list[i] for i in teamA]}]))
+            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" if i.startswith("!") else name_list[i] for i in teamA]}]))
         elif team == "b":
             teamB[index] = id
-            #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": [name_list[i] for i in teamB]}]))
-        print(full_name_list[playerId] + " has been replaced by " + full_name_list[id] + ".") 
-        #sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + " -> " + name_list[id]])) 
-        #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 400]]))
+            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": ["" if i.startswith("!") else name_list[i] for i in teamB]}]))
+        print(full_name_list[playerId] + " has been replaced by " + full_name_list[id] + ".")
+        sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + " -> " + name_list[id]]))
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [index + 1, 400]]))
     writeToDatabase()
     for i in range(lightnings):
         writeToDatabase()
@@ -587,8 +589,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
             all_users.append(player["username"])
             full_name_list[player["username"]] = BLUE + player["first_name"] + " " + player["last_name"][0] + "." + RESET
             name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
-        #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
-        #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": [name_list[i] for i in teamA], "b": [name_list[i] for i in teamB]}]))
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}]))
         print(GREEN + "Lightning " + str(i + 1) + RESET + ":")
         while True:
             full_name_list = {}
@@ -600,7 +602,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                 name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
             playerId = ""
             invalid_input = False
-            seat_num
+            seat_num = 0
             player = input(f"{GREEN}Player{RESET} (team & seat or player ID): ").lower().strip()
             do_pass = False
             if not player.isalnum():
@@ -649,9 +651,11 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                 if player in teamA:
                     playerId = player
                     team = "a"
+                    seat_num = teamA.index(player) + 1
                 elif player in teamB:
                     playerId = player
                     team = "b"
+                    seat_num = teamB.index(player) + 1
                 else:
                     invalid_input = True
             if invalid_input:
@@ -675,8 +679,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                     elif team == "b":
                         score["b"] += 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
-                    #sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": +10"]))
-                    #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 400]]))
+                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": +10"]))
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 400]]))
                     queue_change([playerId, "lightning", [1, 0, 0], game_date_time, i + 1, "a" if playerId in teamA else "b"])
                 elif up_or_down == "-10" or up_or_down == "-" or up_or_down == "neg" or up_or_down == "i":
                     if team == "a":
@@ -684,8 +688,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                     elif team == "b":
                         score["b"] -= 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
-                    #sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": -10"]))
-                    #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", [name_list[playerId], 400]]))
+                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": -10"]))
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 400]]))
                     queue_change([playerId, "lightning", [0, 1, 0], game_date_time, i + 1, "a" if playerId in teamA else "b"])
                 else:
                     print("That is not a valid input.")
@@ -696,7 +700,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
         if i < lightnings - 1:
             print("Score: " + BLUE + str(score["a"]) + " - " + str(score["b"]) + RESET)
             time.sleep(2)
-        #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
     print("Final Score: " + BLUE + str(score["a"]) + " - " + str(score["b"]) + RESET)
     time.sleep(2)
 
@@ -972,7 +976,7 @@ try:
                     name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
                 
                 writeToDatabase()
-                #sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" for i in range(len(teamA))] if team_a_individual != "y" else [name_list[i] for i in teamA], "b": ["" for i in range(len(teamB))] if team_b_individual != "y" else [name_list[i] for i in teamB]}]))
+                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" for i in range(len(teamA))] if team_a_individual != "y" else [name_list[i] for i in teamA], "b": ["" for i in range(len(teamB))] if team_b_individual != "y" else [name_list[i] for i in teamB]}]))
                 questionTracker(name_rows, tossups, lightnings, teamA, teamB, teamAName = teamAName if teamAName != "team A" else "Team A", teamBName = teamBName if teamBName != "team B" else "Team B")
                 input(f"Press {GREEN}enter{RESET} to continue.")
                 break
