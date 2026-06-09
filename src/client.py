@@ -80,6 +80,16 @@ def prompt_name(prompt):
             return value
         print("That cannot be empty. Please enter a value.")
 
+def seat_index(value, team):
+    """Resolve a 1-based seat string to the player on `team`. Rejects seat 0
+    (and any non-positive seat) so it can't silently wrap to the last seat via
+    Python's negative indexing; raises IndexError/ValueError on bad input, which
+    the callers already catch."""
+    seat = int(value)
+    if seat < 1:
+        raise IndexError
+    return team[seat - 1]
+
 def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A", teamBName = "Team B"):
     global changes_to_send
     score = {"a": 0, "b": 0}
@@ -206,22 +216,22 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                 elif len(player) == 2:
                     if (player[:1] == "a"):
                         try:
-                            playerId = teamA[int(player[1:]) - 1]
+                            playerId = seat_index(player[1:], teamA)
                         except:
                             invalid_input = True
                     elif (player[1:] == "a"):
                         try:
-                            playerId = teamA[int(player[:1]) - 1]
+                            playerId = seat_index(player[:1], teamA)
                         except:
                             invalid_input = True
                     elif (player[:1] == "b"):
                         try:
-                            playerId = teamB[int(player[1:]) - 1]
+                            playerId = seat_index(player[1:], teamB)
                         except:
                             invalid_input = True
                     elif (player[1:] == "b"):
                         try:
-                            playerId = teamB[int(player[:1]) - 1]
+                            playerId = seat_index(player[:1], teamB)
                         except:
                             invalid_input = True
                     else:
@@ -314,7 +324,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                 elif len(player) == 2:
                     if (player[:1] == "a"):
                         try:
-                            playerId = teamA[int(player[1:]) - 1]
+                            playerId = seat_index(player[1:], teamA)
                             seat_num = int(player[1:])
                             team = "a"
                             if team_a_answer:
@@ -323,7 +333,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                             invalid_input = True
                     elif (player[1:] == "a"):
                         try:
-                            playerId = teamA[int(player[:1]) - 1]
+                            playerId = seat_index(player[:1], teamA)
                             seat_num = int(player[:1])
                             team = "a"
                             if team_a_answer:
@@ -332,7 +342,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                             invalid_input = True
                     elif (player[:1] == "b"):
                         try:
-                            playerId = teamB[int(player[1:]) - 1]
+                            playerId = seat_index(player[1:], teamB)
                             seat_num = int(player[1:])
                             team = "b"
                             if team_b_answer:
@@ -341,7 +351,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                             invalid_input = True
                     elif (player[1:] == "b"):
                         try:
-                            playerId = teamB[int(player[:1]) - 1]
+                            playerId = seat_index(player[:1], teamB)
                             seat_num = int(player[:1])
                             team = "b"
                             if team_b_answer:
@@ -488,22 +498,22 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
         elif len(player) == 2:
             if (player[:1] == "a"):
                 try:
-                    playerId = teamA[int(player[1:]) - 1]
+                    playerId = seat_index(player[1:], teamA)
                 except:
                     invalid_input = True
             elif (player[1:] == "a"):
                 try:
-                    playerId = teamA[int(player[:1]) - 1]
+                    playerId = seat_index(player[:1], teamA)
                 except:
                     invalid_input = True
             elif (player[:1] == "b"):
                 try:
-                    playerId = teamB[int(player[1:]) - 1]
+                    playerId = seat_index(player[1:], teamB)
                 except:
                     invalid_input = True
             elif (player[1:] == "b"):
                 try:
-                    playerId = teamB[int(player[:1]) - 1]
+                    playerId = seat_index(player[:1], teamB)
                 except:
                     invalid_input = True
             else:
@@ -610,28 +620,28 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
             elif len(player) == 2:
                 if (player[:1] == "a"):
                     try:
-                        playerId = teamA[int(player[1:]) - 1]
+                        playerId = seat_index(player[1:], teamA)
                         seat_num = int(player[1:])
                         team = "a"
                     except:
                         invalid_input = True
                 elif (player[1:] == "a"):
                     try:
-                        playerId = teamA[int(player[:1]) - 1]
+                        playerId = seat_index(player[:1], teamA)
                         seat_num = int(player[:1])
                         team = "a"
                     except:
                         invalid_input = True
                 elif (player[:1] == "b"):
                     try:
-                        playerId = teamB[int(player[1:]) - 1]
+                        playerId = seat_index(player[1:], teamB)
                         seat_num = int(player[1:])
                         team = "b"
                     except:
                         invalid_input = True
                 elif (player[1:] == "b"):
                     try:
-                        playerId = teamB[int(player[:1]) - 1]
+                        playerId = seat_index(player[:1], teamB)
                         seat_num = int(player[:1])
                         team = "b"
                     except:
@@ -872,7 +882,7 @@ try:
                     players = input(f"Enter number of {GREEN}players per team{RESET}: ").strip()
                     try:
                         players = int(players)
-                        if players == 0:
+                        if players <= 0:
                             print("That is not a valid number of players.")
                             continue
                         break
@@ -890,8 +900,8 @@ try:
                 name_list["!player"] = ""
                 teamAName = "team A"
                 teamBName = "team B"
-                team_a_individual = input(f"{GREEN}Use{RESET} individual stats for team A (y or n): ")
-                team_b_individual = input(f"{GREEN}Use{RESET} individual stats for team B (y or n): ")
+                team_a_individual = input(f"{GREEN}Use{RESET} individual stats for team A (y or n): ").lower().strip()
+                team_b_individual = input(f"{GREEN}Use{RESET} individual stats for team B (y or n): ").lower().strip()
                 if team_a_individual == "y" and team_b_individual == "y":
                     choice = input(f"{GREEN}Use{RESET} team names (y or n): ")
                 else:

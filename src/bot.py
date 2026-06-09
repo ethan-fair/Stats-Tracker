@@ -65,16 +65,12 @@ def get_usernames():
 def get_names():
     conn = sqlite3.connect("players.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT username FROM players")
-    usernames = [row[0] for row in cursor.fetchall()]
-    cursor.execute("SELECT first_name FROM players")
-    first_names = [row[0] for row in cursor.fetchall()]
-    cursor.execute("SELECT last_name FROM players")
-    last_names = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT username, first_name, last_name FROM players")
+    rows = cursor.fetchall()
     conn.close()
     name_list = {}
-    for i in range(len(usernames)):
-        name_list[usernames[i]] = first_names[i] + " " + last_names[i]
+    for username, first_name, last_name in rows:
+        name_list[username] = first_name + " " + last_name
     return name_list
 
 def get_name(username):
@@ -336,7 +332,7 @@ async def stats_command(interaction: discord.Interaction, username: str):
 
     report_view = ReportTypeView(username=entered)
     await interaction.response.send_message(
-        f"Welcome, **{get_names()[entered]}**! Please choose a report type:",
+        f"Welcome, **{get_name(entered)}**! Please choose a report type:",
         view=report_view,
         ephemeral=True,
     )

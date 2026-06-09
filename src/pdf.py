@@ -165,97 +165,16 @@ def _running_score_chart(rounds, teamA, teamB, width, split_x=None):
     return _fig_to_image(fig, width)
 
 
-# ---------- tossup outcome helpers ----------
-_OUTCOME_COLOR = {15: POWER, 10: GET, -5: NEG, 0: NEUTRAL}
-
-def _outcome_label(v):
-    return {15: "+15", 10: "+10", -5: "−5", 0: "—"}.get(v, str(v))
-
-
 # ---------- header / masthead ----------
 def _header_block(packet, date, styles, width):
     eb = Paragraph(f"M A T C H &nbsp; R E P O R T &nbsp;",
                    styles["eyebrow"])
-    title = Paragraph(f"{datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").strftime("%B %d, %Y")}",
+    title = Paragraph(f"{datetime.datetime.strptime(date, '%b %d, %Y, %I:%M:%S.%f %p').strftime('%B %d, %Y')}",
                       styles["h2"])
-    title = Paragraph(f"{datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").strftime("%B %d, %Y")}",
+    title = Paragraph(f"{datetime.datetime.strptime(date, '%b %d, %Y, %I:%M:%S.%f %p').strftime('%B %d, %Y')}",
                       styles["h1"])
     return [eb, Spacer(1, 2), title, Spacer(1, 2), Spacer(1, 6),
             HLine(width, INK, 1.2)]
-
-
-# ---------- summary strip ----------
-def _summary_strip(data, styles, width):
-    a, b = data["team_a"], data["team_b"]
-    winner = a if a["score"] >= b["score"] else b
-    margin = abs(a["score"] - b["score"])
-    left = [
-        Paragraph(f"WINNER · #{winner['seed']} SEED", styles["eyebrow"]),
-        Paragraph(winner["name"], styles["h1"]),
-        Paragraph(f"{winner['record']} · {winner['nickname']}", styles["muted"]),
-    ]
-    mid = [
-        Paragraph("FINAL", styles["eyebrow"]),
-        Paragraph(f"{a['score']}–{b['score']}", styles["h1"]),
-        Paragraph(f"Margin {margin}", styles["muted"]),
-    ]
-    loser = b if winner is a else a
-    right = [
-        Paragraph(f"#{loser['seed']} SEED", styles["eyebrow"]),
-        Paragraph(loser["name"], styles["h1"]),
-        Paragraph(f"{loser['record']} · {loser['nickname']}", styles["muted"]),
-    ]
-    t = Table([[left, mid, right]], colWidths=[width * 0.4, width * 0.2, width * 0.4])
-    t.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (1, 0), (1, 0), "CENTER"),
-        ("ALIGN", (2, 0), (2, 0), "RIGHT"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    return [t, Spacer(1, 10), HLine(width), Spacer(1, 10)]
-
-
-# ---------- round-by-round scorecard ----------
-def _round_table(rounds, styles, width):
-    header = ["TU", "PLAYER / CATEGORY", "TEAM 1", "TEAM 2", "BONUS", "TEAM A SCORE", "TEAM B SCORE", "MARGIN"]
-    rows = [header]
-    for r in rounds:
-        rows.append([
-            f"{r['tu']:02d}",
-            Paragraph(f"<b>{r['category']}</b><br/><font color='#6B6B6B' size=7>{r['subject']}</font>",
-                      styles["base"]),
-            _outcome_label(r["a_buzz"]),
-            _outcome_label(r["b_buzz"]),
-            r.get("bonus", "—"),
-            str(r["a_total"]),
-            str(r["b_total"]),
-            f"{'+' if r['margin'] >= 0 else ''}{r['margin']}",
-        ])
-    cw = [0.05, 0.32, 0.09, 0.09, 0.1, 0.1, 0.1, 0.15]
-    t = Table(rows, colWidths=[c * width for c in cw], repeatRows=1)
-    style = [
-        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7),
-        ("TEXTCOLOR", (0, 0), (-1, 0), MUTED),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.8, INK),
-        ("ALIGN", (2, 0), (-1, -1), "CENTER"),
-        ("ALIGN", (0, 0), (0, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("FONT", (0, 1), (-1, -1), "Helvetica", 8),
-        ("TEXTCOLOR", (0, 1), (0, -1), MUTED),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, PAPER]),
-        ("LINEBELOW", (0, 1), (-1, -2), 0.25, RULE),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]
-    # color outcome cells
-    for i, r in enumerate(rounds, start=1):
-        for col, v in ((2, r["a_buzz"]), (3, r["b_buzz"])):
-            style.append(("TEXTCOLOR", (col, i), (col, i), _OUTCOME_COLOR[v]))
-            if v in (15, -5):
-                style.append(("FONT", (col, i), (col, i), "Helvetica-Bold", 8))
-    t.setStyle(TableStyle(style))
-    return t
 
 
 # ---------- player line table ----------
@@ -293,7 +212,7 @@ def _player_table(team, styles, width, seats = 1, team_name = None):
         segs = [(point_distr["powers"], POWER), (point_distr["tens"], GET),
                 (point_distr["negs"], NEG), (max(0, max_tuh - (point_distr["powers"] + point_distr["tens"] + point_distr["negs"])), NEUTRAL)]
         name = Paragraph(
-            f"<b>{names[p] if p.isalpha() else "Combined Score"}</b><br/>",
+            f"<b>{names[p] if p.isalpha() else 'Combined Score'}</b><br/>",
             styles["base"])
         rows.append([name, str(point_distr["powers"] * 15 + point_distr["tens"] * 10 + point_distr["negs"] * -5),
                      StackedBar(width * 0.4, 10, segs)])
@@ -346,7 +265,7 @@ def _player_table_lightning(team, styles, width):
         segs = [(point_distr["tens"], GET),
                 (point_distr["negs"], NEG), (max(0, max_tuh - (point_distr["tens"] + point_distr["negs"])), NEUTRAL)]
         name = Paragraph(
-            f"<b>{names[p] if p.isalpha() else "Combined Score"}</b><br/>",
+            f"<b>{names[p] if p.isalpha() else 'Combined Score'}</b><br/>",
             styles["base"])
         rows.append([name, str(point_distr["tens"] * 10 + point_distr["negs"] * -10),
                      StackedBar(width * 0.4, 10, segs)])
@@ -725,7 +644,7 @@ def _category_slider_table(cats, styles, width):
                 str(cats[c][0] * 15 + cats[c][1] * 10 + cats[c][2] * -5),
             ])
     rows.sort(key = lambda x: int(x[5]), reverse = True)
-    rows = [["CATEGORY", "P%", "ACCURACY", "TUH", "DISTRUBITION", "PTS"]] + rows
+    rows = [["CATEGORY", "P%", "ACCURACY", "TUH", "DISTRIBUTION", "PTS"]] + rows
     cw = [0.22, 0.06, 0.36, 0.12, 0.12, 0.12]
     t = Table(rows, colWidths=[c * width for c in cw])
     t.setStyle(TableStyle([
@@ -896,7 +815,7 @@ def generate_player_report(player, games, out_path = None):
         _stat_tile("NEGS", str(point_distr["negs"]), styles, W / 6),
         _stat_tile("TOSSUPS HEARD", str(point_distr["tuh"]), styles, W / 6),
         _stat_tile("TOTAL POINTS", str(point_distr["powers"] * 15 + point_distr["tens"] * 10 + -5 * point_distr["negs"]), styles, W / 6),
-        _stat_tile("PP20TUH", f"{((point_distr["powers"] * 15 + point_distr["tens"] * 10 + -5 * point_distr["negs"]) / (point_distr["tuh"] if point_distr["tuh"] > 0 else 1) * 20):.1f}", styles, W / 6),
+        _stat_tile("PP20TUH", f"{((point_distr['powers'] * 15 + point_distr['tens'] * 10 + -5 * point_distr['negs']) / (point_distr['tuh'] if point_distr['tuh'] > 0 else 1) * 20):.1f}", styles, W / 6),
     ]
     tile_row = Table([tiles], colWidths=[W / 6] * 6)
     tile_row.setStyle(TableStyle([
@@ -947,8 +866,8 @@ def generate_player_report(player, games, out_path = None):
     tiles = [
         _stat_tile("ANSWERED", str(master_data_list["bonus_ans"]), styles, W / 4),
         _stat_tile("HEARD", str(master_data_list["bonus_heard"]), styles, W / 4),
-        _stat_tile("CONVERSION", f"{master_data_list["bonus_ans"] / master_data_list["bonus_heard"] * 100 if master_data_list["bonus_heard"] > 0 else 0:.1f}" + "%", styles, W / 4),
-        _stat_tile("PP3BH", f"{master_data_list["bonus_ans"] / master_data_list["bonus_heard"] * 30 if master_data_list["bonus_heard"] > 0 else 0:.1f}", styles, W / 4)
+        _stat_tile("CONVERSION", f"{master_data_list['bonus_ans'] / master_data_list['bonus_heard'] * 100 if master_data_list['bonus_heard'] > 0 else 0:.1f}" + "%", styles, W / 4),
+        _stat_tile("PP3BH", f"{master_data_list['bonus_ans'] / master_data_list['bonus_heard'] * 30 if master_data_list['bonus_heard'] > 0 else 0:.1f}", styles, W / 4)
     ]
     tile_row = Table([tiles], colWidths=[W / 4] * 4)
     tile_row.setStyle(TableStyle([
@@ -965,7 +884,7 @@ def generate_player_report(player, games, out_path = None):
         _stat_tile("INCORRECT", str(master_data_list["lightning"][1]), styles, W / 5),
         _stat_tile("HEARD", str(master_data_list["lightning"][2]), styles, W / 5),
         _stat_tile("POINTS", str(master_data_list["lightning"][0] * 10 + master_data_list["lightning"][1] * -10), styles, W / 5),
-        _stat_tile("CONVERSION", f"{master_data_list["lightning"][0] / master_data_list["lightning"][2] * 100 if master_data_list["lightning"][2] > 0 else 0:.1f}" + "%", styles, W / 5)
+        _stat_tile("CONVERSION", f"{master_data_list['lightning'][0] / master_data_list['lightning'][2] * 100 if master_data_list['lightning'][2] > 0 else 0:.1f}" + "%", styles, W / 5)
     ]
     tile_row = Table([tiles], colWidths=[W / 5] * 5)
     tile_row.setStyle(TableStyle([
