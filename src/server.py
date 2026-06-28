@@ -4,7 +4,6 @@ import json
 import random
 import os
 import time
-from datetime import date
 import datetime
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -18,10 +17,36 @@ server_socket.settimeout(1)
 
 print("Server open on \033[32m" + IP + ":" + str(PORT) + "\033[0m")
 
-num_list = []
 game_list = {}
 
 last_cleared_date = None
+
+
+def broadcast_to_scoreboards(item, message):
+    item["last_active"] = time.time()
+    for a in list(item["pending_acks"]):
+        item["pending_acks"][a] += 1
+    unresponsive = [a for a, c in item["pending_acks"].items() if c >= 5]
+    for dead in unresponsive:
+        print(f"Removing unresponsive scoreboard: {dead}")
+        del item["pending_acks"][dead]
+    item["scoreboards"] = [s for s in item["scoreboards"] if s not in unresponsive]
+    for s in item["scoreboards"]:
+        server_socket.sendto(message.encode(), s)
+        item["pending_acks"].setdefault(s, 0)
+
+
+SCOREBOARD_FPS = 40
+
+
+def empty_scoreboard_state():
+    return {
+        "score": {"a": 0, "b": 0},
+        "messages": {"a": [], "b": []},
+        "seats": {"a": [], "b": []},
+        "highlights": {"a": [], "b": []},
+    }
+
 
 while True:
     current_time = time.time()
@@ -35,10 +60,7 @@ while True:
         print(f"Removing inactive game: {game_list[key]['game_id']}")
         for scoreboard in game_list[key]["scoreboards"]:
             server_socket.sendto(b"CLOSED", scoreboard)
-        x = game_list[key]
         del game_list[key]
-        if x["game_id"] in num_list:
-            num_list.remove(x["game_id"])
 
     try:
         data, addr = server_socket.recvfrom(4096)
@@ -57,6 +79,13 @@ while True:
         pass
     if code == "PROBE":
         server_socket.sendto(b"pass", addr)
+    elif code == "KPALV": #Keep a game alive while the client idles at a menu
+        item = game_list.get(data)
+        if item is not None:
+            item["last_active"] = time.time()
+            server_socket.sendto(b"pass", addr)
+        else:
+            server_socket.sendto(b"error", addr)
     elif code == "PLTME":
         server_socket.sendto(datetime.datetime.now().strftime("%b %d, %Y, %I:%M:%S.%f %p").encode(), addr)
     elif code == "PLNME":
@@ -88,20 +117,29 @@ while True:
         server_socket.sendto(json.dumps(name_rows).encode(), addr)
 
     elif code == "ADSCR": #add scoreboard
-        found = False
-        for index, item in game_list.items():
-            if str(item["game_id"]) == data:
-                found = True
-                server_socket.sendto(b"pass", addr)
-        if not found:
+        if data in game_list:
+            server_socket.sendto(b"pass", addr)
+        else:
             server_socket.sendto(b"invalid", addr)
     elif code == "SUBCD": #Add ip to scoreboards listening
-        for index, item in game_list.items():
-            if str(item["game_id"]) == data:
-                item["last_active"] = time.time()
-                if addr not in item["scoreboards"]:
-                    item["scoreboards"].append(addr)
-                item["pending_acks"].pop(addr, None)
+        item = game_list.get(data)
+        if item is not None:
+            item["last_active"] = time.time()
+            if addr not in item["scoreboards"]:
+                item["scoreboards"].append(addr)
+                st = item["scoreboard_state"]
+                server_socket.sendto(("SEAT|" + json.dumps(["NEW_PLAYERS", st["seats"]])).encode(), addr)
+                now = time.time()
+                for team in ("a", "b"):
+                    for seat, expiry in st["highlights"][team]:
+                        remaining = int((expiry - now) * SCOREBOARD_FPS)
+                        if remaining > 0:
+                            server_socket.sendto(("SEAT|" + json.dumps(["HIGHLIGHT", team, [seat, remaining]])).encode(), addr)
+                server_socket.sendto(("SCORE|" + json.dumps(st["score"])).encode(), addr)
+                for team in ("a", "b"):
+                    for line in st["messages"][team]:
+                        server_socket.sendto(("MESSAGE|" + json.dumps([team, line])).encode(), addr)
+            item["pending_acks"].pop(addr, None)
         server_socket.sendto(b"pass", addr)
     elif code == "RMSCR": #Remove a scoreboard
         for index, item in game_list.items():
@@ -109,140 +147,89 @@ while True:
             if any(str(s) == str(addr) for s in scoreboards):
                 item["last_active"] = time.time()
                 item["scoreboards"] = [s for s in scoreboards if str(s) != str(addr)]
-                server_socket.sendto(b"pass", addr)
+                item["pending_acks"].pop(addr, None)
+        server_socket.sendto(b"pass", addr)
     elif code == "CLOSE": #Close client link
-        to_pop = None
-        for index, item in game_list.items():
-            if str(item["game_id"]) == data:
-                item["last_active"] = time.time()
-                to_pop = index
-        if to_pop is not None:
-            item = game_list.pop(to_pop)
-            try:
-                num = int(data)
-            except Exception:
-                continue
-            if num in num_list:
-                num_list.remove(num)
+        item = game_list.pop(data, None)
+        if item is not None:
             for i in item["scoreboards"]:
                 server_socket.sendto(b"CLOSED", i)
             server_socket.sendto(b"pass", addr)
     elif code == "HLSCR": #Send score data to scoreboards
-        flag = False
-        for index, item in game_list.items():
-            if len(data.split("|")) >= 2:
-                if str(item["game_id"]) == data.split("|")[0]:
-                    flag = True
-                    item["last_active"] = time.time()
-                    for addr_key in list(item["pending_acks"]):
-                        item["pending_acks"][addr_key] += 1
-
-                    unresponsive = [a for a, count in item["pending_acks"].items() if count >= 5]
-                    if unresponsive:
-                        for dead in unresponsive:
-                            print(f"Removing unresponsive scoreboard: {dead}")
-                            del item["pending_acks"][dead]
-                        item["scoreboards"] = [s for s in item["scoreboards"] if s not in unresponsive]
-
-                    for i in item["scoreboards"]:
-                        server_socket.sendto(("SCORE|" + data.split("|")[1]).encode(), i)
-                        if i not in item["pending_acks"]:
-                            item["pending_acks"][i] = 0
-                    server_socket.sendto(b"pass", addr)
-            else:
-                break
-        if not flag:
+        parts = data.split("|", 1)
+        item = game_list.get(parts[0]) if len(parts) >= 2 else None
+        if item is not None:
+            try:
+                item["scoreboard_state"]["score"] = json.loads(parts[1])
+            except Exception:
+                pass
+            broadcast_to_scoreboards(item, "SCORE|" + parts[1])
+            server_socket.sendto(b"pass", addr)
+        else:
             server_socket.sendto(b"error", addr)
     elif code == "STSCR": #Send seat data to scoreboards
-        flag = False
-        for index, item in game_list.items():
-            if len(data.split("|")) >= 2:
-                if str(item["game_id"]) == data.split("|")[0]:
-                    flag = True
-                    item["last_active"] = time.time()
-                    for addr_key in list(item["pending_acks"]):
-                        item["pending_acks"][addr_key] += 1
-
-                    unresponsive = [a for a, count in item["pending_acks"].items() if count >= 5]
-                    if unresponsive:
-                        for dead in unresponsive:
-                            print(f"Removing unresponsive scoreboard: {dead}")
-                            del item["pending_acks"][dead]
-                        item["scoreboards"] = [s for s in item["scoreboards"] if s not in unresponsive]
-
-                    for i in item["scoreboards"]:
-                        server_socket.sendto(("SEAT|" + data.split("|")[1]).encode(), i)
-                        if i not in item["pending_acks"]:
-                            item["pending_acks"][i] = 0
-                    server_socket.sendto(b"pass", addr)
-            else:
-                break
-        if not flag:
+        parts = data.split("|", 1)
+        item = game_list.get(parts[0]) if len(parts) >= 2 else None
+        if item is not None:
+            try:
+                payload = json.loads(parts[1])
+                state = item["scoreboard_state"]
+                if payload[0] == "NEW_PLAYERS":
+                    for key, names in payload[1].items():
+                        if key in ("a", "b"):
+                            state["seats"][key] = names
+                elif payload[0] == "HIGHLIGHT":
+                    team, h = payload[1], payload[2]
+                    if (team in ("a", "b") and isinstance(h, list) and len(h) == 2
+                            and isinstance(h[0], int) and not isinstance(h[0], bool)
+                            and isinstance(h[1], (int, float)) and not isinstance(h[1], bool)):
+                        state["highlights"][team].append([h[0], time.time() + h[1] / SCOREBOARD_FPS])
+                elif payload[0] == "SET_HIGHLIGHT":
+                    state["highlights"]["a"] = []
+                    state["highlights"]["b"] = []
+            except Exception:
+                pass
+            broadcast_to_scoreboards(item, "SEAT|" + parts[1])
+            server_socket.sendto(b"pass", addr)
+        else:
             server_socket.sendto(b"error", addr)
     elif code == "SCRCK": #Scoreboard acknowledged score receipt
         for index, item in game_list.items():
             item["pending_acks"].pop(addr, None)
     elif code == "SDMSG":
-        flag = False
-        for index, item in game_list.items():
-            if len(data.split("|")) >= 2:
-                if str(item["game_id"]) == data.split("|")[0]:
-                    flag = True
-                    item["last_active"] = time.time()
-                    for addr_key in list(item["pending_acks"]):
-                        item["pending_acks"][addr_key] += 1
-
-                    unresponsive = [a for a, count in item["pending_acks"].items() if count >= 5]
-                    if unresponsive:
-                        for dead in unresponsive:
-                            print(f"Removing unresponsive scoreboard: {dead}")
-                            del item["pending_acks"][dead]
-                        item["scoreboards"] = [s for s in item["scoreboards"] if s not in unresponsive]
-
-                    for i in item["scoreboards"]:
-                        server_socket.sendto(("MESSAGE|" + data.split("|")[1]).encode(), i)
-                        if i not in item["pending_acks"]:
-                            item["pending_acks"][i] = 0
-                    server_socket.sendto(b"pass", addr)
-            else:
-                break
-        if not flag:
+        parts = data.split("|", 1)
+        item = game_list.get(parts[0]) if len(parts) >= 2 else None
+        if item is not None:
+            try:
+                payload = json.loads(parts[1])
+                team, line = payload[0], payload[1]
+                if team in ("a", "b"):
+                    msgs = item["scoreboard_state"]["messages"][team]
+                    msgs.append(line)
+                    del msgs[:-5]
+            except Exception:
+                pass
+            broadcast_to_scoreboards(item, "MESSAGE|" + parts[1])
+            server_socket.sendto(b"pass", addr)
+        else:
             server_socket.sendto(b"error", addr)
     elif code == "ADPLR": #add a player to the database
         try:
-            conn = sqlite3.connect("players.db")
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            try:
-                cursor.execute("SELECT * FROM players")
-                result = cursor.fetchall()
-            except:
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS players (
-                        username TEXT PRIMARY KEY,
-                        first_name TEXT NOT NULL,
-                        last_name TEXT NOT NULL
-                    )
-                """)
-                conn.commit()
-
-                cursor.execute("SELECT * FROM players")
-                result = cursor.fetchall()
-
-            rows = [dict(row) for row in result]
-
-            conn.close()
-
             try:
                 data = json.loads(data)
             except (json.JSONDecodeError, KeyError, IndexError):
                 server_socket.sendto(b"error", addr)
                 continue
 
-            to_insert = {"username": data[0], "first_name": data[1], "last_name": data[2]}
-
             conn = sqlite3.connect("players.db")
             c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS players (
+                    username TEXT PRIMARY KEY,
+                    first_name TEXT NOT NULL,
+                    last_name TEXT NOT NULL
+                )
+            """)
             c.execute("""
             INSERT INTO players (username, first_name, last_name)
             VALUES (?, ?, ?)
@@ -250,74 +237,55 @@ while True:
                 first_name=excluded.first_name,
                 last_name=excluded.last_name
             """, (
-                to_insert["username"],
-                to_insert["first_name"],
-                to_insert["last_name"]
+                data[0],
+                data[1],
+                data[2]
             ))
             conn.commit()
             conn.close()
             server_socket.sendto(b"pass", addr)
         except Exception:
             server_socket.sendto(b"error", addr)
-        
+
     elif code == "PLNUM":
         num = random.randint(100000, 999999)
-        while num in num_list:
+        while str(num) in game_list:
             num = random.randint(100000, 999999)
-        game_list[str(addr)] = {
+        game_list[str(num)] = {
             "game_id": num,
             "scoreboards": [],
             "pending_acks": {},
             "last_active": time.time(),
             "session_name": data,
-            "game_logs": {}
+            "game_logs": {},
+            "scoreboard_state": empty_scoreboard_state()
         }
-        num_list.append(num)
         server_socket.sendto(str(num).encode(), addr)
     elif code == "STGME":
         try:
-            conn = sqlite3.connect("players.db")
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            try:
-                cursor.execute("SELECT * FROM games")
-                result = cursor.fetchall()
-            except:
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS games (
-                        date TEXT PRIMARY KEY,
-                        data TEXT NOT NULL
-                    )
-                """)
-                conn.commit()
-
-                cursor.execute("SELECT * FROM games")
-                result = cursor.fetchall()
-
-            rows = [dict(row) for row in result]
-            cursor.close()
-            rows = json.loads(json.dumps(rows))
             try:
                 data = json.loads(data)
             except (json.JSONDecodeError, KeyError, IndexError):
                 server_socket.sendto(b"error", addr)
                 continue
-            rows.append({"date": data[0], "data": json.dumps(data[1])})
-            conn.commit()
-            conn.close()
-            
+
             conn = sqlite3.connect("players.db")
             c = conn.cursor()
-            for player in rows:
-                c.execute("""
-                INSERT INTO games (date, data)
-                VALUES (?, ?)
-                ON CONFLICT(date) DO UPDATE SET
-                    data=excluded.data
-                """, (
-                    player["date"],
-                    player["data"]
-                ))
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS games (
+                    date TEXT PRIMARY KEY,
+                    data TEXT NOT NULL
+                )
+            """)
+            c.execute("""
+            INSERT INTO games (date, data)
+            VALUES (?, ?)
+            ON CONFLICT(date) DO UPDATE SET
+                data=excluded.data
+            """, (
+                data[0],
+                json.dumps(data[1])
+            ))
             conn.commit()
             conn.close()
             server_socket.sendto("pass".encode(), addr)
@@ -343,27 +311,12 @@ while True:
         except:
             pass
     elif code == "RESCR":
-        flag = False
-        for index, item in game_list.items():
-            if str(item["game_id"]) == data.split("|")[0]:
-                flag = True
-                item["last_active"] = time.time()
-                for addr_key in list(item["pending_acks"]):
-                    item["pending_acks"][addr_key] += 1
-
-                unresponsive = [a for a, count in item["pending_acks"].items() if count >= 5]
-                if unresponsive:
-                    for dead in unresponsive:
-                        print(f"Removing unresponsive scoreboard: {dead}")
-                        del item["pending_acks"][dead]
-                    item["scoreboards"] = [s for s in item["scoreboards"] if s not in unresponsive]
-
-                for i in item["scoreboards"]:
-                    server_socket.sendto("RESET|".encode(), i)
-                    if i not in item["pending_acks"]:
-                        item["pending_acks"][i] = 0
-                server_socket.sendto(b"pass", addr)
-        if not flag:
+        item = game_list.get(data.split("|")[0])
+        if item is not None:
+            item["scoreboard_state"] = empty_scoreboard_state()
+            broadcast_to_scoreboards(item, "RESET|")
+            server_socket.sendto(b"pass", addr)
+        else:
             server_socket.sendto(b"error", addr)
     elif code == "PACKS":
         conn = sqlite3.connect("players.db")
@@ -390,47 +343,32 @@ while True:
         server_socket.sendto(json.dumps(rows).encode(), addr)
     elif code == "ADPAC":
         try:
-            conn = sqlite3.connect("players.db")
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            try:
-                cursor.execute("SELECT * FROM packets")
-                result = cursor.fetchall()
-            except:
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS packets (
-                        id TEXT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        date TEXT NOT NULL
-                    )
-                """)
-                conn.commit()
-
-                cursor.execute("SELECT * FROM packets")
-                result = cursor.fetchall()
-            rows = [dict(row) for row in result]
-            conn.close()
             try:
                 data = json.loads(data)
             except (json.JSONDecodeError, KeyError, IndexError):
                 server_socket.sendto(b"error", addr)
                 continue
-            rows.append({"id": data[0], "name": data[1], "date": data[2]})
 
             conn = sqlite3.connect("players.db")
             c = conn.cursor()
-            for player in rows:
-                c.execute("""
-                INSERT INTO packets (id, name, date)
-                VALUES (?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    name=excluded.name,
-                    date=excluded.date
-                """, (
-                    player["id"],
-                    player["name"],
-                    player["date"]
-                ))
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS packets (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    date TEXT NOT NULL
+                )
+            """)
+            c.execute("""
+            INSERT INTO packets (id, name, date)
+            VALUES (?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                date=excluded.date
+            """, (
+                data[0],
+                data[1],
+                data[2]
+            ))
             conn.commit()
             conn.close()
             server_socket.sendto("pass".encode(), addr)
@@ -504,7 +442,9 @@ while True:
             if not row:
                 conn.close()
                 conn = None
-                server_socket.sendto(b"pass", addr)
+                # The game row was never created (lost STGME). Tell the client
+                # so it re-queues the change instead of discarding it as written.
+                server_socket.sendto(b"nogame", addr)
                 continue
 
             arr = json.loads(row["data"])

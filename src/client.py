@@ -81,10 +81,6 @@ def prompt_name(prompt):
         print("That cannot be empty. Please enter a value.")
 
 def seat_index(value, team):
-    """Resolve a 1-based seat string to the player on `team`. Rejects seat 0
-    (and any non-positive seat) so it can't silently wrap to the last seat via
-    Python's negative indexing; raises IndexError/ValueError on bad input, which
-    the callers already catch."""
     seat = int(value)
     if seat < 1:
         raise IndexError
@@ -115,6 +111,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
         ids = []
         names = {}
         flag = False
+        declined = False
         for previous_packet in previous_packets:
             ids.append(previous_packet["id"])
             names[previous_packet["id"]] = previous_packet["name"]
@@ -124,8 +121,10 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                 if confirm == "y":
                     sendMessage("WRPAC" + json.dumps({"date": datetime.date.today().strftime("%m/%d/%Y"), "id": packet}))
                 else:
-                    continue
+                    declined = True
                 break
+        if declined:
+            continue
         if not flag:
             packet_name = input(f"Packet is not identified in the database.\nEnter a name for the packet (ex: {GREEN}Invitational Series #226A Packet 1{RESET}) or pass: ").strip()
             if packet_name.lower() == "pass":
@@ -137,7 +136,9 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
         name = input("Enter session name: ").strip()
     else:
         name = names[packet]
-    sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name if teamAName == "Team A" or teamBName == "Team B" else teamAName + " vs. " + teamBName, "a_name": teamAName, "b_name": teamBName}]))
+    stgme_response = sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name if teamAName == "Team A" or teamBName == "Team B" else teamAName + " vs. " + teamBName, "a_name": teamAName, "b_name": teamBName}]), repeat=3)
+    if stgme_response != "pass":
+        print(RED + "Warning" + RESET + ": the server did not confirm that the game was registered. Stats will be kept locally and retried, but check the connection.")
     while tossup < tossups:
         full_name_list = {}
         name_list = {}
@@ -258,7 +259,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                     team = "b"
                     index = teamB.index(playerId)
                 while True:
-                    id = input(f"Enter user ID to {GREEN}replace{RESET} " + full_name_list[playerId] + ": ").strip()
+                    id = input(f"Enter user ID to {GREEN}replace{RESET} " + full_name_list[playerId] + ": ").lower().strip()
                     if not id.isalpha():
                         print("Usernames can only contain letters.")
                         continue
@@ -646,6 +647,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                         team = "b"
                     except:
                         invalid_input = True
+                else:
+                    invalid_input = True
                 if not invalid_input:
                     if playerId.isalpha():
                         if input(f"{GREEN}Confirm{RESET} that the player is " + full_name_list[playerId] + " (y or n): ").lower().strip() != "y":
@@ -716,16 +719,13 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
 
 def writeToDatabase():
     global changes_to_send
-    reappend = []
     length = len(changes_to_send)
     for i in range(length):
         change = changes_to_send.pop(0)
         msg = sendMessage("WRROW" + json.dumps({"id": change["id"], "data": change["data"]}), repeat=1)
-        if msg == "TIMEOUT" or msg == "SVRCLS":
-            reappend.append(change)
+        if msg == "TIMEOUT" or msg == "SVRCLS" or msg == "nogame":
+            changes_to_send.insert(0, change)
             break
-    for change in reappend:
-        changes_to_send.append(change)
 
     
 def sendMessage(message: str, repeat = 1, timeout = 2.0):
@@ -758,7 +758,6 @@ def renamePlayer(rows):
     for player in rows:
         full_name_list[player["username"]] = BLUE + player["first_name"] + " " + player["last_name"] + RESET
 
-    # 1. Choose the player to rename.
     while True:
         target = input(f"Enter the {GREEN}username{RESET} of the player to rename, or \"c\" to cancel: ").lower().strip()
         if target == "c":
@@ -773,7 +772,6 @@ def renamePlayer(rows):
 
     current = next(player for player in rows if player["username"] == target)
 
-    # 2. New username — must be unique unless it is left unchanged.
     while True:
         new_username = input(f"Enter the {GREEN}new username{RESET} (or press enter to keep \"" + target + "\"): ").lower().strip()
         if new_username == "":
@@ -781,12 +779,14 @@ def renamePlayer(rows):
         if new_username != target and new_username in all_users:
             print("That username already exists. Choose a different one.")
             continue
+        if not new_username.isalpha():
+            print("Usernames can only contain letters.")
+            continue
         if len(new_username) < 3:
             print("Usernames must be 3 characters or longer.")
             continue
         break
 
-    # 3. New first / last name — press enter to keep the current value.
     first_name = input(f"Enter the {GREEN}new first name{RESET} (or press enter to keep \"" + current["first_name"] + "\"): ").strip()
     if first_name == "":
         first_name = current["first_name"]
@@ -794,7 +794,6 @@ def renamePlayer(rows):
     if last_name == "":
         last_name = current["last_name"]
 
-    # 4. Send the change to the server.
     response = sendMessage("CHNME" + json.dumps({
         "old_username": target,
         "new_username": new_username,
@@ -837,6 +836,15 @@ try:
         else:
             game_id_num = int(data)
             print("Game ID: " + GREEN + str(game_id_num) + RESET)
+
+            def keepalive_loop():
+                while True:
+                    time.sleep(300)
+                    try:
+                        sendMessage("KPALV" + str(game_id_num), repeat=1)
+                    except Exception:
+                        pass
+            threading.Thread(target=keepalive_loop, daemon=True).start()
 
     if os.path.exists("changes.json"):
         with open("changes.json") as f:
@@ -942,6 +950,7 @@ try:
                                 continue
                 else:
                     teamA = ["!playerA"] * players
+                    name_rows = [row for row in name_rows if row["username"] != "!playerA"]
                     name_rows += [{"username": i, "first_name": "Team", "last_name": "A"} for i in teamA]
                 if team_b_individual == "y":
                     for i in range(players):
@@ -976,6 +985,7 @@ try:
                                 continue
                 else:
                     teamB = ["!playerB"] * players
+                    name_rows = [row for row in name_rows if row["username"] != "!playerB"]
                     name_rows += [{"username": i, "first_name": "Team", "last_name": "B"} for i in teamB]
                 full_name_list = {}
                 name_list = {}

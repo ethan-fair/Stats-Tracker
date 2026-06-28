@@ -124,6 +124,8 @@ class SingleDateModal(Modal, title="Enter Date"):
             await interaction.response.send_message(f"{e}", ephemeral=True)
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         date_info = selected_date.strftime("%B %d, %Y")
 
         dates_to_use = []
@@ -135,14 +137,21 @@ class SingleDateModal(Modal, title="Enter Date"):
         if dates_to_use != []:
             pdf_buffer = pdf.generate_player_report(self.username, dates_to_use)
 
-            await interaction.response.send_message(
+            if pdf_buffer is None:
+                await interaction.followup.send(
+                    f"No stats were recorded for {get_name(self.username)} on this date.",
+                    ephemeral=True,
+                )
+                return
+
+            await interaction.followup.send(
                 f"Here is your **Single Date** report ({date_info}), {get_name(self.username)}!",
                 file=discord.File(pdf_buffer, filename=self.username + ".pdf"),
                 ephemeral=True,
             )
-        
+
         else:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"There were no games on this date.",
                 ephemeral=True,
             )
@@ -193,6 +202,8 @@ class DateRangeModal(Modal, title="Enter Date Range"):
             )
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         date_info = (
             f"{start_date.strftime('%B %d, %Y')} → {end_date.strftime('%B %d, %Y')}"
         )
@@ -206,14 +217,21 @@ class DateRangeModal(Modal, title="Enter Date Range"):
         if dates_to_use != []:
             pdf_buffer = pdf.generate_player_report(self.username, dates_to_use)
 
-            await interaction.response.send_message(
+            if pdf_buffer is None:
+                await interaction.followup.send(
+                    f"No stats were recorded for {get_name(self.username)} between these two dates.",
+                    ephemeral=True,
+                )
+                return
+
+            await interaction.followup.send(
                 f"Here is your **Date Range** report ({date_info}), {get_name(self.username)}!",
                 file=discord.File(pdf_buffer, filename=self.username + ".pdf"),
                 ephemeral=True,
             )
-        
+
         else:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"There were no games between these two dates.",
                 ephemeral=True,
             )
@@ -261,6 +279,14 @@ class ReportTypeView(View):
             if get_dates() != []:
                 pdf_buffer = pdf.generate_player_report(self.username, get_dates())
 
+                if pdf_buffer is None:
+                    await interaction.followup.send(
+                        f"No stats were recorded for {get_name(self.username)}.",
+                        ephemeral=True,
+                    )
+                    self.stop()
+                    return
+
                 await interaction.followup.send(
                     f"Here is your **All Time** report, {get_name(self.username)}!",
                     file=discord.File(pdf_buffer, filename=self.username + ".pdf"),
@@ -279,35 +305,6 @@ class ReportTypeView(View):
             await interaction.response.send_modal(DateRangeModal(self.username))
 
         self.stop()
-
-
-# ── Step 1: Username Modal ─────────────────────────────────────
-
-class UsernameModal(Modal, title="Username"):
-    username_input: TextInput = TextInput(
-        label="Username",
-        placeholder="Enter username",
-        required=True,
-        max_length=64,
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        entered = self.username_input.value.strip().lower()
-
-        if entered.lower() not in [u.lower() for u in get_usernames()]:
-            await interaction.response.send_message(
-                f"**{entered}** is not an authorised username. "
-                "Please check your username and try `/stats` again.",
-                ephemeral=True,
-            )
-            return
-
-        report_view = ReportTypeView(username=entered)
-        await interaction.response.send_message(
-            f"Welcome, **{get_name(entered)}**! Please choose a report type:",
-            view=report_view,
-            ephemeral=True,
-        )
 
 
 # ──────────────────────────────────────────────────────────────

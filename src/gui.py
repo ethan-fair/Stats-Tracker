@@ -11,13 +11,6 @@ from queue import Queue
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-if "win32" in sys.platform:
-    try:
-        ctypes.windll.user32.SetProcessDPIAware()
-        print("worked")
-    except AttributeError:
-        raise AttributeError
-
 running = True
 message_queue = Queue()
 
@@ -42,13 +35,13 @@ while running:
     if session == "pass":
         running = False
         break
+    client_socket = None
     try:
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         client_socket.settimeout(0.5)
         client_socket.sendto(str("ADSCR" + session).encode(), (IP, PORT))
         data, addr = client_socket.recvfrom(4096)
         data = data.decode("utf-8")
-        client_socket.close()
         if data == "pass":
             break
         else:
@@ -58,12 +51,17 @@ while running:
         input("Press \033[32menter\033[0m to continue.")
         running = False
         break
+    finally:
+        if client_socket:
+            client_socket.close()
 if running:
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client_socket.bind(("0.0.0.0", 0))
     client_socket.settimeout(0.5)
 
     client_socket.sendto(("SUBCD" + session).encode(), (IP, PORT))
+else:
+    sys.exit(0)
 
 class TextBox():
     def __init__(self, screen, x, y):
@@ -495,4 +493,10 @@ while running:
     pygame.display.flip()
     clock.tick(40)
     pygame.display.set_caption("Scoreboard - session id:" + str(session))
+
+try:
+    client_socket.sendto(b"RMSCR", (IP, PORT))
+except Exception:
+    pass
+pygame.quit()
 

@@ -19,6 +19,9 @@ import sqlite3
 import json
 import datetime
 matplotlib.use("Agg")
+import os
+
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # ---------- palette (matches design) ----------
 INK        = colors.HexColor("#111111")
@@ -169,8 +172,6 @@ def _running_score_chart(rounds, teamA, teamB, width, split_x=None):
 def _header_block(packet, date, styles, width):
     eb = Paragraph(f"M A T C H &nbsp; R E P O R T &nbsp;",
                    styles["eyebrow"])
-    title = Paragraph(f"{datetime.datetime.strptime(date, '%b %d, %Y, %I:%M:%S.%f %p').strftime('%B %d, %Y')}",
-                      styles["h2"])
     title = Paragraph(f"{datetime.datetime.strptime(date, '%b %d, %Y, %I:%M:%S.%f %p').strftime('%B %d, %Y')}",
                       styles["h1"])
     return [eb, Spacer(1, 2), title, Spacer(1, 2), Spacer(1, 6),
@@ -571,6 +572,8 @@ def generate_match_report(date, out_path = None):
         story += _team_block(teamB, styles, W, seats["b"])
         #story.append(HLine(W, INK, 1.2))
         story.append(Spacer(1, 8))
+        story.append(_legend(styles, W))
+        story.append(Spacer(1, 8))
 
         # bonus conversion (both teams)
         story.append(Paragraph("B O N U S &nbsp; C O N V E R S I O N", styles["eyebrow"]))
@@ -900,6 +903,6 @@ def generate_player_report(player, games, out_path = None):
     return out_path if out_path else buf
 
 if __name__ == "__main__":
-    generate_match_report("May 31, 2026, 04:29:56.047386 PM", "match_report.pdf")
+    generate_match_report('Jun 25, 2026, 04:54:26.600221 PM', "match_report.pdf")
     generate_player_report("ethanf", ["May 31, 2026, 04:29:56.047386 PM"], "player_report.pdf")
     print("OK")
