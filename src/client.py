@@ -94,49 +94,49 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
     if game_date_time == "SVRCLS" or game_date_time == "TIMEOUT":
         game_date_time = datetime.datetime.now().strftime("%b %d, %Y, %I:%M:%S.%f %p")
     do_name = False
-    while True:
-        packet = input(f"Enter {GREEN}packet name{RESET} for tossups (ex: {GREEN}IS #226A P1{RESET}) or use a session name (name): ").lower()
-        if packet == "name":
-            do_name = True
-            break
-        packs_response = sendMessage("PACKS")
-        if packs_response in ("TIMEOUT", "SVRCLS", "error"):
-            print(f"Could not reach the server to look up packets. {GREEN}Try again{RESET}.")
-            continue
-        try:
-            previous_packets = json.loads(packs_response)
-        except (json.JSONDecodeError, TypeError):
-            print(f"Received an unexpected response from the server. {GREEN}Try again{RESET}.")
-            continue
-        ids = []
-        names = {}
-        flag = False
-        declined = False
-        for previous_packet in previous_packets:
-            ids.append(previous_packet["id"])
-            names[previous_packet["id"]] = previous_packet["name"]
-            if previous_packet["id"] == packet:
-                confirm = input("Packet is " + GREEN + names[packet] + RESET + " and was last played " + str(abs((datetime.datetime.now().date() - datetime.datetime.strptime(previous_packet["date"], "%m/%d/%Y").date()).days)) + " days ago.\nConfirm packet (y / n): ").lower().strip()
-                flag = True
-                if confirm == "y":
-                    sendMessage("WRPAC" + json.dumps({"date": datetime.date.today().strftime("%m/%d/%Y"), "id": packet}))
-                else:
-                    declined = True
+    if tossups > 0:
+        while True:
+            packet = input(f"Enter {GREEN}packet name{RESET} for tossups (ex: {GREEN}IS #226A P1{RESET}) or pass: ").lower()
+            if packet == "pass":
                 break
-        if declined:
-            continue
-        if not flag:
-            packet_name = input(f"Packet is not identified in the database.\nEnter a name for the packet (ex: {GREEN}Invitational Series #226A Packet 1{RESET}) or pass: ").strip()
-            if packet_name.lower() == "pass":
+            packs_response = sendMessage("PACKS")
+            if packs_response in ("TIMEOUT", "SVRCLS", "error"):
+                print(f"Could not reach the server to look up packets. {GREEN}Try again{RESET}.")
                 continue
-            sendMessage("ADPAC" + json.dumps([packet, packet_name, datetime.date.today().strftime("%m/%d/%Y")]))
-            names[packet] = packet_name
-        break
-    if do_name:
+            try:
+                previous_packets = json.loads(packs_response)
+            except (json.JSONDecodeError, TypeError):
+                print(f"Received an unexpected response from the server. {GREEN}Try again{RESET}.")
+                continue
+            ids = []
+            names = {}
+            flag = False
+            declined = False
+            for previous_packet in previous_packets:
+                ids.append(previous_packet["id"])
+                names[previous_packet["id"]] = previous_packet["name"]
+                if previous_packet["id"] == packet:
+                    confirm = input("Packet is " + GREEN + names[packet] + RESET + " and was last played " + str(abs((datetime.datetime.now().date() - datetime.datetime.strptime(previous_packet["date"], "%m/%d/%Y").date()).days)) + " days ago.\nConfirm packet (y / n): ").lower().strip()
+                    flag = True
+                    if confirm == "y":
+                        sendMessage("WRPAC" + json.dumps({"date": datetime.date.today().strftime("%m/%d/%Y"), "id": packet}))
+                    else:
+                        declined = True
+                    break
+            if declined:
+                continue
+            if not flag:
+                packet_name = input(f"Packet is not identified in the database.\nEnter a name for the packet (ex: {GREEN}Invitational Series #226A Packet 1{RESET}) or pass: ").strip()
+                if packet_name.lower() == "pass":
+                    continue
+                sendMessage("ADPAC" + json.dumps([packet, packet_name, datetime.date.today().strftime("%m/%d/%Y")]))
+                names[packet] = packet_name
+            break
+    if teamAName == "Team A" or teamBName == "Team B":
         name = input("Enter session name: ").strip()
     else:
-        name = names[packet]
-    stgme_response = sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name if teamAName == "Team A" or teamBName == "Team B" else teamAName + " vs. " + teamBName, "a_name": teamAName, "b_name": teamBName}]), repeat=3)
+        name = teamAName + " vs. " + teamBName
+    stgme_response = sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name, "a_name": teamAName, "b_name": teamBName}]), repeat=3)
     if stgme_response != "pass":
         print(RED + "Warning" + RESET + ": the server did not confirm that the game was registered. Stats will be kept locally and retried, but check the connection.")
     while tossup < tossups:
@@ -149,6 +149,10 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
             name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}]))
+        to_highlight = []
+        for num, i in enumerate(teamA):
+            if not i.startswith("!"):
+                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", "a", [num + 1, ]]))
         tossup += 1
         category = ""
         while True:
@@ -319,7 +323,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                 invalid_input = False
                 return_with_neg_error = False
                 seat_num = 0
-                player = input("Player (team & seat or player ID): ").lower().strip()
+                player = input("Player (team & seat or player ID, pass for no answer): ").lower().strip()
                 if not player.isalnum():
                     invalid_input = True
                 elif len(player) == 2:
@@ -412,13 +416,13 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                     score[team] += 15
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 15"]))
-                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 10**6]]))
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 10**8]]))
                 elif finalType == 2:
                     queue_change([playerId, category, [0, 1, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] += 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 10"]))
-                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 10**6]]))
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 10**8]]))
                 elif finalType == 3:
                     queue_change([playerId, category, [0, 0, 1, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] -= 5
@@ -435,7 +439,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                     elif playerId in teamB:
                         team_b_answer = True
                     sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 0"]))
-                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 400]]))
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 200]]))
                 if team_a_answer and team_b_answer:
                     bonus = False
                     break

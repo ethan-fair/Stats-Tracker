@@ -903,6 +903,6 @@ def generate_player_report(player, games, out_path = None):
     return out_path if out_path else buf
 
 if __name__ == "__main__":
-    generate_match_report('Jun 25, 2026, 04:54:26.600221 PM', "match_report.pdf")
+    generate_match_report('Jun 28, 2026, 02:13:41.276115 PM', "match_report.pdf")
     generate_player_report("ethanf", ["May 31, 2026, 04:29:56.047386 PM"], "player_report.pdf")
     print("OK")
