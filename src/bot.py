@@ -240,7 +240,6 @@ class DateRangeModal(Modal, title="Enter Date Range"):
 # ── Step 2: Report Type Menu ───────────────────────────────────
 
 class ReportTypeView(View):
-    """Three-option menu: All Time | Single Date | Date Range."""
 
     def __init__(self, username: str):
         super().__init__(timeout=120)
@@ -306,11 +305,6 @@ class ReportTypeView(View):
 
         self.stop()
 
-
-# ──────────────────────────────────────────────────────────────
-# BOT SETUP
-# ──────────────────────────────────────────────────────────────
-
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
@@ -334,13 +328,7 @@ async def stats_command(interaction: discord.Interaction, username: str):
         ephemeral=True,
     )
 
-
-# ──────────────────────────────────────────────────────────────
-# GAME REPORT — helpers
-# ──────────────────────────────────────────────────────────────
-
-def get_all_games() -> list[str]:
-    """Return every unique game name stored in the games table."""
+def get_all_games() -> tuple[list[str], dict[str, str]]:
     conn = sqlite3.connect("players.db")
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -380,12 +368,6 @@ def get_all_games() -> list[str]:
     #print(return_games)
     return dates, return_games
 
-
-
-# ──────────────────────────────────────────────────────────────
-# GAME REPORT — /game_report command with autocomplete
-# ──────────────────────────────────────────────────────────────
-
 @tree.command(name="games", description="Generate a report for a specific game")
 @app_commands.describe(game="Start typing to search for a game")
 async def game_report_command(interaction: discord.Interaction, game: str):
@@ -401,7 +383,23 @@ async def game_report_command(interaction: discord.Interaction, game: str):
 
     await interaction.response.defer(ephemeral=True)
 
-    pdf_buffer = pdf.generate_match_report(linked[game])
+    try:
+        pdf_buffer = pdf.generate_match_report(linked[game])
+    except Exception as e:
+        print(f"Failed to build match report for {linked[game]}: {type(e).__name__}: {e}")
+        await interaction.followup.send(
+            f"Something went wrong while building the report for **{game}**.",
+            ephemeral=True,
+        )
+        return
+
+    if pdf_buffer is None:
+        await interaction.followup.send(
+            f"No stats were recorded for **{game}**.",
+            ephemeral=True,
+        )
+        return
+
     await interaction.followup.send(
         f"Here is the report for **{game}**!",
         file=discord.File(pdf_buffer, filename="game_data.pdf"),
@@ -424,13 +422,8 @@ async def game_autocomplete(
 
 @client.event
 async def on_ready():
-    await tree.sync()          # registers slash commands globally (can take ~1 hr to propagate)
+    await tree.sync()
     print(f"Logged in as {client.user}, fully synced.")
-
-
-# ──────────────────────────────────────────────────────────────
-# RUN
-# ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     client.run(BOT_TOKEN)

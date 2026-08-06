@@ -22,16 +22,17 @@ if not config.has_section("CONNECTION"):
     running = False
     input("Press enter to continue.")
 
-try:
-    IP = config["CONNECTION"]["ip"]
-    PORT = int(config["CONNECTION"]["port"])
-except:
-    print("The IP or port is incorrectly formatted.")
-    running = False
-    input("Press enter to continue.")
+if running:
+    try:
+        IP = config["CONNECTION"]["ip"]
+        PORT = int(config["CONNECTION"]["port"])
+    except:
+        print("The IP or port is incorrectly formatted.")
+        running = False
+        input("Press enter to continue.")
 
 while running:
-    session = input("Enter the \033[32msession id\033[0m: ").lower()
+    session = input("Enter the \033[32msession id\033[0m: ").lower().strip()
     if session == "pass":
         running = False
         break
@@ -262,7 +263,10 @@ class Counter():
         if new_score != self.score:
             self.prev_score = self.score
             self.score = new_score
-            self.anim_progress = 0.0
+            if (new_score < 0) != (self.prev_score < 0):
+                self.anim_progress = 1.0
+            else:
+                self.anim_progress = 0.0
     def add_score(self, amount):
         self.set_score(self.score + amount)
 
@@ -368,16 +372,16 @@ while running:
     while not message_queue.empty():
         try:
             msg = message_queue.get()
-            
             if msg.startswith("SCORE|"):
-                teamACounter.set_score(json.loads(msg.split("|")[1])["a"])
-                teamBCounter.set_score(json.loads(msg.split("|")[1])["b"])
+                score = json.loads(msg.split("|", 1)[1])
+                teamACounter.set_score(score["a"])
+                teamBCounter.set_score(score["b"])
                 try:
                     client_socket.sendto(b"SCRCK", (IP, PORT))
                 except:
                     pass
             elif msg.startswith("MESSAGE|"):
-                data = json.loads(msg.split("|")[1])
+                data = json.loads(msg.split("|", 1)[1])
                 if data[0] == "a":
                     teamAText.add_line(data[1])
                 elif data[0] == "b":
@@ -387,7 +391,7 @@ while running:
                 except:
                     pass
             elif msg.startswith("SEAT|"):
-                data = json.loads(msg.split("|")[1])
+                data = json.loads(msg.split("|", 1)[1])
                 if data[0] == "NEW_PLAYERS":
                     for key, team in data[1].items():
                         if key == "a":

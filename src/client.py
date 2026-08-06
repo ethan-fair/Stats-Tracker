@@ -13,6 +13,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 changes_to_send = []
 change_id_counter = 0
+pending_players = []
 
 def queue_change(data):
     global change_id_counter
@@ -24,7 +25,7 @@ def close():
     if changes_to_send:
         writeToDatabase()
     if changes_to_send:
-        print(changes_to_send)
+        print("Some stats could not be sent to the server. They have been saved and will be sent the next time this client starts.")
         with open("changes.json", "w") as f:
             json.dump(changes_to_send, f)
             changes_to_send = []
@@ -60,25 +61,26 @@ if scriptRunning:
         input("Press enter to continue.")
 
 
-#Declaration of colors
-if scriptRunning:
-    if use_rich_text == "True":
-        RED = "\033[31m"
-        GREEN = "\033[32m"
-        BLUE = "\033[1;34m"
-        RESET = "\033[0m"
-    else:
-        RED = ""
-        GREEN = ""
-        BLUE = ""
-        RESET = ""
+RED = ""
+GREEN = ""
+BLUE = ""
+RESET = ""
+if scriptRunning and use_rich_text == "True":
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    BLUE = "\033[1;34m"
+    RESET = "\033[0m"
 
 def prompt_name(prompt):
     while True:
         value = input(prompt).strip()
-        if value:
-            return value
-        print("That cannot be empty. Please enter a value.")
+        if not value:
+            print("That cannot be empty. Please enter a value.")
+            continue
+        if "|" in value:
+            print("That cannot contain the \"|\" character.")
+            continue
+        return value
 
 def seat_index(value, team):
     seat = int(value)
@@ -86,14 +88,14 @@ def seat_index(value, team):
         raise IndexError
     return team[seat - 1]
 
-def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A", teamBName = "Team B"):
+def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, teamBName = None):
     global changes_to_send
     score = {"a": 0, "b": 0}
     tossup = 0
     game_date_time = sendMessage("PLTME")
     if game_date_time == "SVRCLS" or game_date_time == "TIMEOUT":
         game_date_time = datetime.datetime.now().strftime("%b %d, %Y, %I:%M:%S.%f %p")
-    do_name = False
+    packet = "pass"
     if tossups > 0:
         while True:
             packet = input(f"Enter {GREEN}packet name{RESET} for tossups (ex: {GREEN}IS #226A P1{RESET}) or pass: ").lower()
@@ -132,8 +134,10 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                 sendMessage("ADPAC" + json.dumps([packet, packet_name, datetime.date.today().strftime("%m/%d/%Y")]))
                 names[packet] = packet_name
             break
-    if teamAName == "Team A" or teamBName == "Team B":
-        name = input("Enter session name: ").strip()
+    if teamAName is None or teamBName is None:
+        name = prompt_name("Enter session name: ")
+        teamAName = teamAName or "Team A"
+        teamBName = teamBName or "Team B"
     else:
         name = teamAName + " vs. " + teamBName
     stgme_response = sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name, "a_name": teamAName, "b_name": teamBName}]), repeat=3)
@@ -213,7 +217,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                 team = ""
                 index = -1
                 invalid_input = False
-                player = input(f"{GREEN}Input{RESET} player (team & seat or player ID) to be subbed {GREEN}OUT{RESET}, or enter \"c\" to cancel: ").lower()
+                player = input(f"{GREEN}Input{RESET} player (team & seat or player ID) to be subbed {GREEN}OUT{RESET}, or enter \"c\" to cancel: ").lower().strip()
                 if player == "c":
                     break
                 if not player.isalnum():
@@ -285,7 +289,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                         if choice.lower() == "y":
                             first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                             last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
-                            sendMessage("ADPLR" + json.dumps([id, first_name, last_name]))
+                            ensure_player(id, first_name, last_name)
                             all_users.append(id)
                             full_name_list[id] = BLUE + first_name + " " + last_name[0] + "." + RESET
                             name_list[id] = first_name + " " + last_name[0] + "."
@@ -569,7 +573,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
                 if choice.lower() == "y":
                     first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                     last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
-                    sendMessage("ADPLR" + json.dumps([id, first_name, last_name]))
+                    ensure_player(id, first_name, last_name)
                     if team == "a":
                         teamA[index] = id
                     elif team == "b":
@@ -721,8 +725,36 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = "Team A
     print("Final Score: " + BLUE + str(score["a"]) + " - " + str(score["b"]) + RESET)
     time.sleep(2)
 
+def flush_pending_players():
+    """Re-send player registrations the server never confirmed."""
+    global pending_players
+    if not pending_players:
+        return
+    still_pending = []
+    for player in pending_players:
+        if sendMessage("ADPLR" + json.dumps(player), repeat=2) != "pass":
+            still_pending.append(player)
+    pending_players = still_pending
+
+def ensure_player(username, first_name, last_name):
+    """Register a player on the server, retrying until the add is confirmed.
+
+    An unconfirmed add leaves stats recorded under a username that has no row
+    in the players table, which permanently breaks every later report for that
+    game, so an unacknowledged add is retried from writeToDatabase() instead of
+    being sent once and forgotten.
+    """
+    player = [username, first_name, last_name]
+    if sendMessage("ADPLR" + json.dumps(player), repeat=3) == "pass":
+        return True
+    pending_players.append(player)
+    print(RED + "Warning" + RESET + ": the server did not confirm that " + first_name + " " + last_name + " was added. This will keep retrying.")
+    return False
+
 def writeToDatabase():
     global changes_to_send
+    # Players first: a stat is useless if the player it belongs to was never saved.
+    flush_pending_players()
     length = len(changes_to_send)
     for i in range(length):
         change = changes_to_send.pop(0)
@@ -730,8 +762,17 @@ def writeToDatabase():
         if msg == "TIMEOUT" or msg == "SVRCLS" or msg == "nogame":
             changes_to_send.insert(0, change)
             break
+        if msg != "pass":
+            # The server rejected the change. Retry a few times in case the
+            # failure was transient, then drop it with a warning rather than
+            # letting one bad change block everything queued behind it.
+            change["attempts"] = change.get("attempts", 0) + 1
+            if change["attempts"] < 3:
+                changes_to_send.insert(0, change)
+                break
+            print(RED + "Warning" + RESET + ": the server rejected a stat for " + str(change["data"][0]) + " (" + str(change["data"][1]) + ") and it was not saved.")
 
-    
+
 def sendMessage(message: str, repeat = 1, timeout = 2.0):
     for i in range(repeat):
         client_socket = None
@@ -850,7 +891,10 @@ try:
                         pass
             threading.Thread(target=keepalive_loop, daemon=True).start()
 
-    if os.path.exists("changes.json"):
+    # Only replay queued stats once the config and server are known good. Without
+    # this guard a bad config leaves IP/PORT undefined and the replay dies with a
+    # NameError, after having already deleted changes.json below.
+    if scriptRunning and os.path.exists("changes.json"):
         with open("changes.json") as f:
             loaded = json.load(f)
         migrated = []
@@ -865,7 +909,9 @@ try:
                 change_id_counter = item["id"]
         changes_to_send = migrated
         writeToDatabase()
-        os.remove("changes.json")
+        # Keep the file if anything is still queued; close() rewrites it on exit.
+        if not changes_to_send:
+            os.remove("changes.json")
 
     while scriptRunning:
         print("Select a command: ")
@@ -880,16 +926,27 @@ try:
                     tossups = input(f"Enter number of {GREEN}tossups{RESET}: ").strip()
                     try:
                         tossups = int(tossups)
-                        break
                     except:
                         print("That is not a valid input.")
+                        continue
+                    if tossups < 0:
+                        print("That is not a valid number of tossups.")
+                        continue
+                    break
                 while True:
                     lightnings = input(f"Enter number of {GREEN}lightnings{RESET}: ").strip()
                     try:
                         lightnings = int(lightnings)
-                        break
                     except:
                         print("That is not a valid input.")
+                        continue
+                    if lightnings < 0:
+                        print("That is not a valid number of lightnings.")
+                        continue
+                    if tossups == 0 and lightnings == 0:
+                        print("A game must have at least one tossup or one lightning.")
+                        continue
+                    break
                 while True:
                     players = input(f"Enter number of {GREEN}players per team{RESET}: ").strip()
                     try:
@@ -909,22 +966,23 @@ try:
                     all_users.append(player["username"])
                     full_name_list[player["username"]] = BLUE + player["first_name"] + " " + player["last_name"][0] + "." + RESET
                     name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
-                name_list["!player"] = ""
-                teamAName = "team A"
-                teamBName = "team B"
+                teamAName = None
+                teamBName = None
                 team_a_individual = input(f"{GREEN}Use{RESET} individual stats for team A (y or n): ").lower().strip()
                 team_b_individual = input(f"{GREEN}Use{RESET} individual stats for team B (y or n): ").lower().strip()
                 if team_a_individual == "y" and team_b_individual == "y":
-                    choice = input(f"{GREEN}Use{RESET} team names (y or n): ")
+                    choice = input(f"{GREEN}Use{RESET} team names (y or n): ").lower().strip()
                 else:
                     choice = "y"
                 if choice == "y":
-                    teamAName = input(f"{GREEN}Enter{RESET} the name for team A: ")
-                    teamBName = input(f"{GREEN}Enter{RESET} the name for team B: ")
+                    teamAName = prompt_name(f"{GREEN}Enter{RESET} the name for team A: ")
+                    teamBName = prompt_name(f"{GREEN}Enter{RESET} the name for team B: ")
+                teamADisplay = teamAName or "team A"
+                teamBDisplay = teamBName or "team B"
                 if team_a_individual == "y":
                     for i in range(players):
                         while True:
-                            id = input(f"Enter user ID for {GREEN}seat " + str(i + 1) + RESET + f" on {GREEN}{teamAName}{RESET}: ").lower().strip()
+                            id = input(f"Enter user ID for {GREEN}seat " + str(i + 1) + RESET + f" on {GREEN}{teamADisplay}{RESET}: ").lower().strip()
                             if not id.isalpha():
                                 print("That is not a valid username.")
                                 continue
@@ -943,7 +1001,7 @@ try:
                                 if choice.lower() == "y":
                                     first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                                     last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
-                                    sendMessage("ADPLR" + json.dumps([id, first_name, last_name]))
+                                    ensure_player(id, first_name, last_name)
                                     teamA[i] = id
                                     name_rows.append({"username": id, "first_name": first_name, "last_name": last_name})
                                     break
@@ -959,7 +1017,7 @@ try:
                 if team_b_individual == "y":
                     for i in range(players):
                         while True:
-                            id = input(f"Enter user ID for {GREEN}seat " + str(i + 1) + RESET + f" on {GREEN}{teamBName}{RESET}: ").lower().strip()
+                            id = input(f"Enter user ID for {GREEN}seat " + str(i + 1) + RESET + f" on {GREEN}{teamBDisplay}{RESET}: ").lower().strip()
                             if not id.isalpha():
                                 print("That is not a valid username.")
                                 continue
@@ -978,7 +1036,7 @@ try:
                                 if choice.lower() == "y":
                                     first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                                     last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
-                                    sendMessage("ADPLR" + json.dumps([id, first_name, last_name]))
+                                    ensure_player(id, first_name, last_name)
                                     teamB[i] = id
                                     name_rows.append({"username": id, "first_name": first_name, "last_name": last_name})
                                     break
@@ -1001,7 +1059,7 @@ try:
                 
                 writeToDatabase()
                 sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" for i in range(len(teamA))] if team_a_individual != "y" else [name_list[i] for i in teamA], "b": ["" for i in range(len(teamB))] if team_b_individual != "y" else [name_list[i] for i in teamB]}]))
-                questionTracker(name_rows, tossups, lightnings, teamA, teamB, teamAName = teamAName if teamAName != "team A" else "Team A", teamBName = teamBName if teamBName != "team B" else "Team B")
+                questionTracker(name_rows, tossups, lightnings, teamA, teamB, teamAName = teamAName, teamBName = teamBName)
                 input(f"Press {GREEN}enter{RESET} to continue.")
                 break
 

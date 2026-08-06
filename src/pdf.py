@@ -180,7 +180,7 @@ def _header_block(packet, date, styles, width):
 
 # ---------- player line table ----------
 def _player_table(team, styles, width, seats = 1, team_name = None):
-    rows = [["PLAYER", "PTS", "TOSSUP OUTCOME DISTRIBUTION"]]
+    rows = []
     players = {}
     for data in team:
         if data[0] in players.keys():
@@ -188,13 +188,14 @@ def _player_table(team, styles, width, seats = 1, team_name = None):
         else:
             players[data[0]] = [[data[1], data[2]]]
     categories = ["lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash"]
+    # Only players who actually played this phase. A player substituted in for
+    # the lightning round alone still carries team-level bonus events from the
+    # tossups, which would otherwise list them here with an empty line.
+    players = {p: evs for p, evs in players.items() if any(e[0] in categories for e in evs)}
     max_tuh = 0
     distrs = {}
     for p in players:
         tuh = sum([players[p][index][1][3] if players[p][index][0] in categories else 0 for index in range(len(players[p]))])
-        # A combined-score team shares one username across every seat, so its
-        # per-seat tossup-heard markers all land on this single entry. Collapse
-        # them back so each question is counted once.
         if not p.isalpha():
             tuh = round(tuh / seats)
         point_distr = {
@@ -211,12 +212,16 @@ def _player_table(team, styles, width, seats = 1, team_name = None):
     for p in players:
         point_distr = distrs[p]
         segs = [(point_distr["powers"], POWER), (point_distr["tens"], GET),
-                (point_distr["negs"], NEG), (max(0, max_tuh - (point_distr["powers"] + point_distr["tens"] + point_distr["negs"])), NEUTRAL)]
+                (point_distr["negs"], NEG), (max(0, point_distr["tuh"] - (point_distr["powers"] + point_distr["tens"] + point_distr["negs"])), NEUTRAL)]
+        #segs = [(point_distr["powers"], POWER), (point_distr["tens"], GET),
+        #        (point_distr["negs"], NEG), (max(0, max_tuh - (point_distr["powers"] + point_distr["tens"] + point_distr["negs"])), NEUTRAL)]
         name = Paragraph(
-            f"<b>{names[p] if p.isalpha() else 'Combined Score'}</b><br/>",
+            f"<b>{names.get(p, p) if p.isalpha() else 'Combined Score'}</b><br/>",
             styles["base"])
         rows.append([name, str(point_distr["powers"] * 15 + point_distr["tens"] * 10 + point_distr["negs"] * -5),
                      StackedBar(width * 0.4, 10, segs)])
+    rows = sorted(rows, key = lambda x: int(x[1]), reverse = True)
+    rows.insert(0, ["PLAYER", "PTS", "TOSSUP OUTCOME DISTRIBUTION"])
     cw = [0.22, 0.08, 0.45, 0.25]
     t = Table(rows, colWidths=[c * width for c in cw])
     t.setStyle(TableStyle([
@@ -240,7 +245,7 @@ def _team_block(team, styles, width, seats = 1):
         Spacer(1, 10),
     ]
 
-def _player_table_lightning(team, styles, width):
+def _player_table_lightning(team, styles, width, seats = 1):
     rows = [["PLAYER", "PTS", "LIGHTNING OUTCOME DISTRIBUTION"]]
     players = {}
     for data in team:
@@ -248,13 +253,23 @@ def _player_table_lightning(team, styles, width):
             players[data[0]].append([data[1], data[2]])
         else:
             players[data[0]] = [[data[1], data[2]]]
+    # Only players who actually played a lightning question. Someone substituted
+    # out during the tossups still has tossup events on the team, and without
+    # this filter they appear here having never played one.
+    players = {p: evs for p, evs in players.items() if any(e[0] == "lightning" for e in evs)}
     max_tuh = 0
     distrs = {}
     for p in players:
+        tuh = sum([players[p][index][1][2] if players[p][index][0] == "lightning" else 0 for index in range(len(players[p]))])
+        # A combined-score team shares one username across every seat, so its
+        # per-seat lightning-heard markers all land on this single entry.
+        # Collapse them back so each question is counted once.
+        if not p.isalpha():
+            tuh = round(tuh / seats)
         point_distr = {
             "tens": sum([players[p][index][1][0] if players[p][index][0] == "lightning" else 0 for index in range(len(players[p]))]),
             "negs": sum([players[p][index][1][1] if players[p][index][0] == "lightning" else 0 for index in range(len(players[p]))]),
-            "tuh": sum([players[p][index][1][2] if players[p][index][0] == "lightning" else 0 for index in range(len(players[p]))])
+            "tuh": tuh
         }
         distrs[p] = point_distr
         if point_distr["tuh"] > max_tuh:
@@ -266,7 +281,7 @@ def _player_table_lightning(team, styles, width):
         segs = [(point_distr["tens"], GET),
                 (point_distr["negs"], NEG), (max(0, max_tuh - (point_distr["tens"] + point_distr["negs"])), NEUTRAL)]
         name = Paragraph(
-            f"<b>{names[p] if p.isalpha() else 'Combined Score'}</b><br/>",
+            f"<b>{names.get(p, p) if p.isalpha() else 'Combined Score'}</b><br/>",
             styles["base"])
         rows.append([name, str(point_distr["tens"] * 10 + point_distr["negs"] * -10),
                      StackedBar(width * 0.4, 10, segs)])
@@ -286,10 +301,10 @@ def _player_table_lightning(team, styles, width):
     return t
 
 
-def _team_block_lightning(team, styles, width):
+def _team_block_lightning(team, styles, width, seats = 1):
     return [
         Spacer(1, 4),
-        _player_table_lightning(team, styles, width),
+        _player_table_lightning(team, styles, width, seats),
         Spacer(1, 10),
     ]
 
@@ -330,13 +345,13 @@ def _bonus_table(bonus_data, team_a, team_b, styles, width):
 
 
 # ---------- lightning conversion (match report) ----------
-def _lightning_table(lightning_team_data, styles, width):
+def _lightning_table(lightning_team_data, team_a, team_b, styles, width):
     """Lightning conversion line for both teams: correct / incorrect / heard / conversion.
 
     lightning_team_data: {"a": [correct, incorrect, heard], "b": [correct, incorrect, heard]}
     """
     rows = [["TEAM", "CORRECT", "INCORRECT", "HEARD", "CONVERSION", "RATE"]]
-    for team, label in (("a", "Team A"), ("b", "Team B")):
+    for team, label in (("a", team_a), ("b", team_b)):
         correct, incorrect, heard = lightning_team_data[team][0], lightning_team_data[team][1], lightning_team_data[team][2]
         conv = correct / heard * 100 if heard > 0 else 0
         rows.append([
@@ -592,19 +607,19 @@ def generate_match_report(date, out_path = None):
         story.append(Spacer(1, 8))
         story.append(Paragraph(eyebrow_team_a, styles["eyebrow"]))
         story.append(Spacer(1, 4))
-        story += _team_block_lightning(teamA, styles, W)
+        story += _team_block_lightning(teamA, styles, W, lightning_seats["a"])
         #story.append(HLine(W, INK, 1.2))
         story.append(Spacer(1, 8))
         story.append(Paragraph(eyebrow_team_b, styles["eyebrow"]))
         story.append(Spacer(1, 4))
-        story += _team_block_lightning(teamB, styles, W)
+        story += _team_block_lightning(teamB, styles, W, lightning_seats["b"])
         #story.append(HLine(W, INK, 1.2))
         story.append(Spacer(1, 8))
 
         # lightning conversion (both teams)
         story.append(Paragraph("L I G H T N I N G &nbsp; C O N V E R S I O N", styles["eyebrow"]))
         story.append(Spacer(1, 4))
-        story.append(_lightning_table(lightning_team_data, styles, W))
+        story.append(_lightning_table(lightning_team_data, game_data["a_name"], game_data["b_name"], styles, W))
         story.append(Spacer(1, 12))
         story.append(Paragraph("L I G H T N I N G &nbsp; C H A R T", styles["eyebrow"]))
         story.append(_running_score_chart(lightning_data, game_data["a_name"], game_data["b_name"], W))
