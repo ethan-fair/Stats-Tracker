@@ -81,13 +81,22 @@ class HLine(Flowable):
 
 
 class StackedBar(Flowable):
-    """Player line: filled segments proportional to tossup outcome counts."""
-    def __init__(self, width, height, segments):
+    """Player line: filled segments proportional to tossup outcome counts.
+
+    With dividers=True a hairline is drawn at every whole-unit boundary, so each
+    question can be picked out and counted along the bar. Skipped when the total
+    is not a whole number of questions, or when the questions would be packed
+    too tightly for the lines to read as separators.
+    """
+    MIN_DIVIDER_SPACING = 2.5
+
+    def __init__(self, width, height, segments, dividers=False):
         # segments: list of (count, color)
         Flowable.__init__(self)
         self.w, self.h = width, height
-        total = sum(c for c, _ in segments) or 1
-        self.segs = [(c / total, col) for c, col in segments if c]
+        self.dividers = dividers
+        self.total = sum(c for c, _ in segments) or 1
+        self.segs = [(c / self.total, col) for c, col in segments if c]
     def wrap(self, *a): return (self.w, self.h)
     def draw(self):
         x = 0
@@ -96,6 +105,18 @@ class StackedBar(Flowable):
             self.canv.setFillColor(col); self.canv.setStrokeColor(col)
             self.canv.rect(x, 0, w, self.h, stroke=0, fill=1)
             x += w
+        if not self.dividers:
+            return
+        units = int(round(self.total))
+        if units < 2 or abs(self.total - units) > 1e-6:
+            return
+        step = self.w / units
+        if step < self.MIN_DIVIDER_SPACING:
+            return
+        self.canv.setStrokeColor(PAPER)
+        self.canv.setLineWidth(0.6)
+        for i in range(1, units):
+            self.canv.line(i * step, 0, i * step, self.h)
 
 
 class Slider(Flowable):
@@ -219,7 +240,7 @@ def _player_table(team, styles, width, seats = 1, team_name = None):
             f"<b>{names.get(p, p) if p.isalpha() else 'Combined Score'}</b><br/>",
             styles["base"])
         rows.append([name, str(point_distr["powers"] * 15 + point_distr["tens"] * 10 + point_distr["negs"] * -5),
-                     StackedBar(width * 0.4, 10, segs)])
+                     StackedBar(width * 0.4, 10, segs, dividers=True)])
     rows = sorted(rows, key = lambda x: int(x[1]), reverse = True)
     rows.insert(0, ["PLAYER", "PTS", "TOSSUP OUTCOME DISTRIBUTION"])
     cw = [0.22, 0.08, 0.45, 0.25]
@@ -246,7 +267,7 @@ def _team_block(team, styles, width, seats = 1):
     ]
 
 def _player_table_lightning(team, styles, width, seats = 1):
-    rows = [["PLAYER", "PTS", "LIGHTNING OUTCOME DISTRIBUTION"]]
+    rows = []
     players = {}
     for data in team:
         if data[0] in players.keys():
@@ -284,8 +305,10 @@ def _player_table_lightning(team, styles, width, seats = 1):
             f"<b>{names.get(p, p) if p.isalpha() else 'Combined Score'}</b><br/>",
             styles["base"])
         rows.append([name, str(point_distr["tens"] * 10 + point_distr["negs"] * -10),
-                     StackedBar(width * 0.4, 10, segs)])
+                     StackedBar(width * 0.4, 10, segs, dividers=True)])
     cw = [0.22, 0.08, 0.45, 0.25]
+    rows = sorted(rows, key = lambda x: int(x[1]), reverse = True)
+    rows.insert(0, ["PLAYER", "PTS", "TOSSUP OUTCOME DISTRIBUTION"])
     t = Table(rows, colWidths=[c * width for c in cw])
     t.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7),
