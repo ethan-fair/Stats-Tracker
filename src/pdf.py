@@ -15,6 +15,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER
 import matplotlib.pyplot as plt
 import matplotlib
+from matplotlib.ticker import MaxNLocator
 import sqlite3
 import json
 import datetime
@@ -170,6 +171,16 @@ def _running_score_chart(rounds, teamA, teamB, width, split_x=None):
     ticks = list(range(0, max(xs) + 1))
     ax.set_xticks(ticks)
     ax.set_xlim(0, max(xs))  # align x=0 with the y-axis (no left padding)
+    # Floor the y-axis at zero and keep its ticks whole. A game where nobody
+    # scores otherwise autoscales to a fractional -0.02..0.02 range. Scores can
+    # genuinely go negative, so the axis drops below zero only if the data does.
+    low = min(0, min(a), min(b))
+    high = max(max(a), max(b))
+    if high - low < 1:
+        high = low + 1               # a flat line still needs a range to sit in
+    pad = (high - low) * 0.08
+    ax.set_ylim(low - (pad if low < 0 else 0), high + pad)
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     if split_x is not None:
         # restart the question count at 1 for the lightning phase past the divider
         boundary = int(split_x)
@@ -308,7 +319,7 @@ def _player_table_lightning(team, styles, width, seats = 1):
                      StackedBar(width * 0.4, 10, segs, dividers=True)])
     cw = [0.22, 0.08, 0.45, 0.25]
     rows = sorted(rows, key = lambda x: int(x[1]), reverse = True)
-    rows.insert(0, ["PLAYER", "PTS", "TOSSUP OUTCOME DISTRIBUTION"])
+    rows.insert(0, ["PLAYER", "PTS", "LIGHTNING OUTCOME DISTRIBUTION"])
     t = Table(rows, colWidths=[c * width for c in cw])
     t.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7),

@@ -158,6 +158,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             if not i.startswith("!"):
                 sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", "a", [num + 1, ]]))
         tossup += 1
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", tossup, tossups, lightnings, "tossup"]))
         category = ""
         while True:
             print(GREEN + "Tossup " + str(tossup) + RESET + ": ")
@@ -610,6 +611,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}]))
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", i + 1, tossups, lightnings, "lightning"]))
         print(GREEN + "Lightning " + str(i + 1) + RESET + ":")
         while True:
             full_name_list = {}

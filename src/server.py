@@ -45,6 +45,7 @@ def empty_scoreboard_state():
         "messages": {"a": [], "b": []},
         "seats": {"a": [], "b": []},
         "highlights": {"a": [], "b": []},
+        "question": [0, 0, 0, "tossup"],   # [number, tossups, lightnings, phase]
     }
 
 
@@ -138,6 +139,9 @@ while True:
                     item["scoreboards"].append(addr)
                     st = item["scoreboard_state"]
                     server_socket.sendto(("SEAT|" + json.dumps(["NEW_PLAYERS", st["seats"]])).encode(), addr)
+                    q = st.get("question") or [0, 0, 0, "tossup"]
+                    if q[0]:
+                        server_socket.sendto(("SEAT|" + json.dumps(["QUESTION"] + list(q))).encode(), addr)
                     now = time.time()
                     for team in ("a", "b"):
                         for seat, expiry in st["highlights"][team]:
@@ -199,6 +203,20 @@ while True:
                     elif payload[0] == "SET_HIGHLIGHT":
                         state["highlights"]["a"] = []
                         state["highlights"]["b"] = []
+                    elif payload[0] == "QUESTION":
+                        def _count(v):
+                            return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+                        q = _count(payload[1])
+                        if q is not None:
+                            tossups = _count(payload[2]) if len(payload) > 2 else None
+                            lightnings = _count(payload[3]) if len(payload) > 3 else None
+                            phase = payload[4] if len(payload) > 4 else None
+                            state["question"] = [
+                                q,
+                                tossups if tossups is not None else 0,
+                                lightnings if lightnings is not None else 0,
+                                phase if phase in ("tossup", "lightning") else "tossup",
+                            ]
                 except Exception:
                     pass
                 broadcast_to_scoreboards(item, "SEAT|" + parts[1])

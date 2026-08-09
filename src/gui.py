@@ -73,7 +73,7 @@ class TextBox():
         self.lines = []
 
         self.font = pygame.font.Font("../assets/IBMPlexSerif-Regular.ttf", 20)
-        self.text_color = (0, 255, 0)
+        self.text_color = (255, 255, 255)
 
         self.base_width = 200
         self.padding_x = 10
@@ -270,6 +270,150 @@ class Counter():
     def add_score(self, amount):
         self.set_score(self.score + amount)
 
+class QuestionWheel():
+    """Slot-machine counter for the current question number.
+
+    The numbers sit on a vertical wheel a full panel apart, so only the current
+    one rests in the window. Changing the number turns the wheel: the old one
+    rolls up out of the panel as the new one rolls in behind it.
+    """
+    TOSSUP_COLOUR = (255, 255, 255)
+    LIGHTNING_COLOUR = (255, 224, 32)
+
+    def __init__(self, screen, x, y):
+        self.screen = screen
+        self.x = x
+        self.y = y
+        # The wheel runs over one continuous sequence of positions: 1..tossups
+        # are the tossups, then the lightnings follow straight on, so the last
+        # tossup's lower neighbour is the first lightning. What each position
+        # prints, and its colour, comes from which phase it lands in.
+        self.position = 0        # 0 until the first question arrives
+        self.prev_position = 0
+        self.tossups = 0
+        self.lightnings = 0
+        self.display = 0.0       # animated wheel position, in whole positions
+        self.anim_progress = 1.0
+        self.anim_speed = 0.09
+        # --- box size: change these two and everything below re-fits itself ---
+        self.base_width = 40
+        self.height = 60
+        self.padding = 4
+        self.current_width = self.base_width
+        # Largest size of the score counters' face that keeps a two-digit
+        # number inside the panel width while leaving vertical room for the
+        # neighbours, so the numbers fit whatever box size is set above.
+        self.font, _ = self._fit_font()
+        # A full panel between consecutive numbers, so only the current one is
+        # ever at rest in the window: the number leaving has completely cleared
+        # the panel by the time the next settles. Both are on screen only while
+        # the wheel is actually turning.
+        self.slot = self.height
+
+    def _fit_font(self):
+        """Biggest UnicaOne that fits the panel, with its digit ink height."""
+        best = None
+        for size in range(10, 200):
+            font = pygame.font.Font("../assets/UnicaOne-Regular.ttf", size)
+            ink = font.render("88", True, (255, 255, 255)).get_bounding_rect()
+            if (ink.width > self.base_width - self.padding * 2
+                    or ink.height > self.height * 0.45):
+                break
+            best = (font, ink.height)
+        if best is None:        # box too small for even the smallest size
+            font = pygame.font.Font("../assets/UnicaOne-Regular.ttf", 10)
+            best = (font, font.render("88", True, (255, 255, 255)).get_bounding_rect().height)
+        return best
+
+    def set_number(self, n, tossups=0, lightnings=0, phase=None):
+        try:
+            n = int(n)
+            tossups = int(tossups)
+            lightnings = int(lightnings)
+        except (TypeError, ValueError):
+            return
+        if n < 1:
+            return
+        if tossups or lightnings:
+            self.tossups, self.lightnings = tossups, lightnings
+        # Lightning numbering restarts at 1, so it sits after the tossups on
+        # the wheel. Moving from the last tossup to the first lightning is then
+        # an ordinary one-step roll rather than a jump back to the start.
+        position = self.tossups + n if phase == "lightning" else n
+        if self.position < 1:
+            # First question: settle straight onto it rather than rolling up
+            # from a position the wheel never shows.
+            self.position = self.prev_position = position
+            self.display = float(position)
+            self.anim_progress = 1.0
+            return
+        if position == self.position:
+            return
+        self.prev_position = self.position
+        self.position = position
+        self.anim_progress = 0.0
+
+    def label_for(self, k):
+        """A wheel position's printed number and colour, by the phase it's in."""
+        if k <= self.tossups:
+            return str(k), self.TOSSUP_COLOUR
+        return str(k - self.tossups), self.LIGHTNING_COLOUR
+
+    def reset(self):
+        self.position = 0
+        self.prev_position = 0
+        self.tossups = 0
+        self.lightnings = 0
+        self.display = 0.0
+        self.anim_progress = 1.0
+        self.current_width = self.base_width
+
+    def update(self):
+        if self.position < 1:
+            return               # nothing to show until the first question
+        if self.anim_progress < 1.0:
+            self.anim_progress = min(1.0, self.anim_progress + self.anim_speed)
+        t = 1 - (1 - self.anim_progress) ** 3
+        self.display = self.prev_position + (self.position - self.prev_position) * t
+
+        # Measure the actual ink, not the advance width, so a number that fits
+        # the box does not push it wider than it needs to be.
+        widest = max((self.label_for(k)[0]
+                      for k in (int(self.display), int(self.display) + 1, self.position)
+                      if k >= 1), key=len, default="8")
+        ink_width = self.font.render(widest, True, (255, 255, 255)).get_bounding_rect().width
+        target_width = max(self.base_width, ink_width + self.padding * 2)
+        self.current_width += (target_width - self.current_width) * 0.2
+        fg_width = int(self.current_width)
+
+        bg_rect = pygame.Rect(0, 0, fg_width + 6, self.height + 6)
+        bg_rect.center = (self.x, self.y)
+        pygame.draw.rect(self.screen, (50, 50, 50), bg_rect)
+
+        fg = pygame.Surface((fg_width, self.height), pygame.SRCALPHA)
+        pygame.draw.rect(fg, (100, 100, 100), fg.get_rect())
+
+        centre_y = self.height // 2
+        first = int(self.display) - 1
+        last = self.tossups + self.lightnings
+        for k in range(first, first + 4):
+            if k < 1:
+                continue         # the wheel starts at the first question
+            if last and k > last:
+                continue         # and stops at the last one of the game
+            dy = (k - self.display) * self.slot
+            if abs(dy) > self.slot * 1.6:
+                continue
+            text, colour = self.label_for(k)
+            surf = self.font.render(text, True, colour)
+            rect = surf.get_rect()
+            rect.centerx = fg_width // 2
+            rect.centery = int(centre_y + dy)
+            fg.blit(surf, rect)
+
+        fg_rect = fg.get_rect(center=bg_rect.center)
+        self.screen.blit(fg, fg_rect)
+
 class SeatTracker():
     def __init__(self, screen, x, y, name_list, alignment):
         self.screen = screen
@@ -312,14 +456,14 @@ class SeatTracker():
                     bottom_rect = pygame.Rect(0, 55 * i, 50, 50)
                     pygame.draw.rect(surface, (0, 100, 0), bottom_rect)
                     pygame.draw.rect(surface, (0, 200, 0), pygame.Rect(5, 55 * i + 5, 40, 40))
-                    text = self.font.render(self.name_list[i], True, (0, 255, 0))
+                    text = self.font.render(self.name_list[i], True, (0, 0, 0))
                     text_rect = text.get_rect()
                     text_rect.midleft = (bottom_rect.right + 10, bottom_rect.centery)
                 elif self.alignment == "RIGHT":
                     bottom_rect = pygame.Rect(200, 55 * i, 50, 50)
                     pygame.draw.rect(surface, (0, 100, 0), bottom_rect)
                     pygame.draw.rect(surface, (0, 200, 0), pygame.Rect(205, 55 * i + 5, 40, 40))
-                    text = self.font.render(self.name_list[i], True, (0, 255, 0))
+                    text = self.font.render(self.name_list[i], True, (0, 0, 0))
                     text_rect = text.get_rect()
                     text_rect.midright = (bottom_rect.left - 10, bottom_rect.centery)
                 #pygame.draw.rect(surface, (0, 0, 0), pygame.Rect(text_rect.left - 5, text_rect.top - 5, text_rect.width + 10, text_rect.height + 10), 2)
@@ -367,6 +511,7 @@ teamAText = TextBox(screen, 320, 500)
 teamBText = TextBox(screen, 960, 500)
 teamASeats = SeatTracker(screen, 0, 360, [], "LEFT")
 teamBSeats = SeatTracker(screen, 1280, 360, [], "RIGHT")
+questionWheel = QuestionWheel(screen, 640, 200)
 
 while running:
     while not message_queue.empty():
@@ -413,6 +558,12 @@ while running:
                             teamBSeats.highlighted.append([h[0], h[1]])
                 elif data[0] == "SET_HIGHLIGHT":
                     teamASeats.highlighted, teamBSeats.highlighted = [], []
+                elif data[0] == "QUESTION":
+                    questionWheel.set_number(
+                        data[1],
+                        data[2] if len(data) > 2 else 0,
+                        data[3] if len(data) > 3 else 0,
+                        data[4] if len(data) > 4 else None)
                 try:
                     client_socket.sendto(b"SCRCK", (IP, PORT))
                 except:
@@ -428,6 +579,7 @@ while running:
                 teamBSeats.highlighted = []
                 teamBSeats.name_list = []
                 teamBSeats.number = 0
+                questionWheel.reset()
                 try:
                     client_socket.sendto(b"SCRCK", (IP, PORT))
                 except:
@@ -479,12 +631,11 @@ while running:
                     teamBSeats.alignment = "RIGHT"
                     default_pos = True
 
-    screen.fill((50, 50, 50))
-    screen.blit(bg, (0, 0))
+    screen.fill((255, 255, 255))
     pygame.draw.rect(screen, (0, 0, 0), pygame.Rect(638, 20, 4, 460))
     pygame.draw.rect(screen, (0, 0, 0), pygame.Rect(638, 570, 4, 130))
     screen.blit(button, button_rect)
-    for widget in (teamACounter, teamBCounter, teamAText, teamBText, teamASeats, teamBSeats):
+    for widget in (teamACounter, teamBCounter, teamAText, teamBText, teamASeats, teamBSeats, questionWheel):
         try:
             widget.update()
         except Exception as e:
