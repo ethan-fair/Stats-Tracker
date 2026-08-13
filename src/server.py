@@ -17,6 +17,8 @@ server_socket.settimeout(1)
 
 print("Server open on \033[32m" + IP + ":" + str(PORT) + "\033[0m")
 
+DB_TIMEOUT = 1.0
+
 game_list = {}
 
 last_cleared_date = None
@@ -50,18 +52,24 @@ def empty_scoreboard_state():
 
 
 while True:
-    current_time = time.time()
-    to_remove = []
+    try:
+        current_time = time.time()
+        to_remove = []
 
-    for key, item in game_list.items():
-        if current_time - item["last_active"] > 1800:
-            to_remove.append(key)
+        for key, item in game_list.items():
+            if current_time - item["last_active"] > 1800:
+                to_remove.append(key)
 
-    for key in to_remove:
-        print(f"Removing inactive game: {game_list[key]['game_id']}")
-        for scoreboard in game_list[key]["scoreboards"]:
-            server_socket.sendto(b"CLOSED", scoreboard)
-        del game_list[key]
+        for key in to_remove:
+            print(f"Removing inactive game: {game_list[key]['game_id']}")
+            for scoreboard in game_list[key]["scoreboards"]:
+                try:
+                    server_socket.sendto(b"CLOSED", scoreboard)
+                except Exception:
+                    pass
+            del game_list[key]
+    except Exception as e:
+        print(f"Error expiring inactive games: {type(e).__name__}: {e}")
 
     try:
         data, addr = server_socket.recvfrom(4096)
@@ -95,14 +103,16 @@ while True:
         elif code == "PLNME":
             conn = None
             try:
-                conn = sqlite3.connect("players.db")
+                conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
                 conn.row_factory = sqlite3.Row
 
                 cursor = conn.cursor()
                 try:
                     cursor.execute("SELECT * FROM players")
                     result = cursor.fetchall()
-                except:
+                except sqlite3.OperationalError as e:
+                    if "no such table" not in str(e).lower():
+                        raise
                     cursor.execute("""
                         CREATE TABLE IF NOT EXISTS players (
                             username TEXT PRIMARY KEY,
@@ -251,7 +261,7 @@ while True:
                     server_socket.sendto(b"error", addr)
                     continue
 
-                conn = sqlite3.connect("players.db")
+                conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
                 c = conn.cursor()
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS players (
@@ -299,7 +309,7 @@ while True:
                     server_socket.sendto(b"error", addr)
                     continue
 
-                conn = sqlite3.connect("players.db")
+                conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
                 c = conn.cursor()
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS games (
@@ -332,13 +342,15 @@ while True:
         elif code == "PACKS":
             conn = None
             try:
-                conn = sqlite3.connect("players.db")
+                conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 try:
                     cursor.execute("SELECT * FROM packets")
                     result = cursor.fetchall()
-                except:
+                except sqlite3.OperationalError as e:
+                    if "no such table" not in str(e).lower():
+                        raise
                     cursor.execute("""
                         CREATE TABLE IF NOT EXISTS packets (
                             id TEXT PRIMARY KEY,
@@ -368,7 +380,7 @@ while True:
                     server_socket.sendto(b"error", addr)
                     continue
 
-                conn = sqlite3.connect("players.db")
+                conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
                 c = conn.cursor()
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS packets (
@@ -396,7 +408,7 @@ while True:
         elif code == "WRPAC":
             try:
                 data = json.loads(data)
-                conn = sqlite3.connect("players.db")
+                conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 cursor.execute("UPDATE packets SET date = ? WHERE id = ?", (data["date"], data["id"]))
@@ -454,7 +466,7 @@ while True:
                         server_socket.sendto(b"error", addr)
                         continue
 
-                conn = sqlite3.connect("players.db")
+                conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
                 conn.row_factory = sqlite3.Row
                 c = conn.cursor()
 
@@ -506,7 +518,7 @@ while True:
                     server_socket.sendto(b"error", addr)
                     continue
 
-                conn = sqlite3.connect("players.db")
+                conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
                 conn.row_factory = sqlite3.Row
                 c = conn.cursor()
 

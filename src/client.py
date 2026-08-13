@@ -872,7 +872,12 @@ try:
             scriptRunning = False
             input(f"Press {GREEN}enter{RESET} to continue.")
         else:
-            name_rows = json.loads(data)
+            try:
+                name_rows = json.loads(data)
+            except (json.JSONDecodeError, TypeError):
+                print(f"The server could not read the player list. {GREEN}Try again{RESET} in a moment.")
+                scriptRunning = False
+                input(f"Press {GREEN}enter{RESET} to continue.")
 
     if scriptRunning:
         data = sendMessage("PLNUM")
@@ -919,7 +924,8 @@ try:
         print("Select a command: ")
         print(f"\t{RED}1.{RESET} Start Game")
         print(f"\t{RED}2.{RESET} Rename Player")
-        print(f"\t{RED}3.{RESET} Close")
+        print(f"\t{RED}3.{RESET} Test Connection")
+        print(f"\t{RED}4.{RESET} Close")
         while True:
             selection = input("Selection: ").strip()
             if selection == "1":
@@ -1071,6 +1077,45 @@ try:
                 break
 
             elif selection == "3":
+                total_time = 0
+                num_times = 0
+                do_check = True
+                for i in range(5):
+                    time_start = datetime.datetime.now().timestamp()
+                    time_mid = sendMessage("PLTME", timeout=5)
+                    time_end = datetime.datetime.now().timestamp()
+                    total_time += time_end - time_start
+                    if time_mid == "SVRCLS" or time_mid == "TIMEOUT":
+                        continue
+                    num_times += 1
+                total_time /= num_times
+                if total_time > 0:
+                    times_round_trip = []
+                    dropped_packets = 0
+                    print("Test started, takes at least 10 seconds to complete.")
+                    for i in range(max([int(10 // total_time), 50])):
+                        time_start = datetime.datetime.now().timestamp()
+                        time_mid = sendMessage("PLTME", timeout=total_time+1)
+                        time_end = datetime.datetime.now().timestamp()
+                        if time_mid == "SVRCLS" or time_mid == "TIMEOUT":
+                            dropped_packets += 1
+                            continue
+                        times_round_trip.append(time_end - time_start)
+                    percent_packets_dropped = dropped_packets/(len(times_round_trip)+dropped_packets) * 100
+                    average_latency = sum(times_round_trip) / len(times_round_trip) * 1000
+                    max_latency = max(times_round_trip) * 1000
+                    print(f"{GREEN}{len(times_round_trip)}{RESET} packets sucessfully exchanged, {GREEN}{dropped_packets}{RESET} packets lost{f" ({GREEN}{percent_packets_dropped:.2f}%{RESET})" if dropped_packets != 0 else ""}. Total {GREEN}{len(times_round_trip) + dropped_packets}{RESET}.")
+                    print(f"{GREEN}{average_latency:.2f}ms{RESET} average latency, maximum {GREEN}{max(times_round_trip) * 1000:.2f}ms{RESET}.")
+                    if percent_packets_dropped > 1:
+                        print(f"{RED}!WARNING!{RESET} Your average packet loss is high, which can indicate an unstable connection. The program may not work as intended with this connection.")
+                    if average_latency > 2000:
+                        print(f"{RED}!WARNING!{RESET} Your average latency is high, which can cause delay during the game.")
+                    if max_latency > 5000:
+                        print(f"{RED}!WARNING!{RESET} Your max latency is greater than 5 seconds, which exceeds the cap for the program.")
+                else:
+                    print("All five pretest packets failed, indicating a disconnection from the server.")
+                break
+            elif selection == "4":
                 scriptRunning = False
                 break
             else:
