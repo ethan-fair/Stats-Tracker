@@ -8,6 +8,8 @@ import datetime
 import atexit
 import signal
 import threading
+import csv
+import statistics as stats
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -775,7 +777,7 @@ def writeToDatabase():
             print(RED + "Warning" + RESET + ": the server rejected a stat for " + str(change["data"][0]) + " (" + str(change["data"][1]) + ") and it was not saved.")
 
 
-def sendMessage(message: str, repeat = 1, timeout = 2.0):
+def sendMessage(message: str, repeat = 3, timeout = 2.0):
     for i in range(repeat):
         client_socket = None
         try:
@@ -1088,8 +1090,8 @@ try:
                     if time_mid == "SVRCLS" or time_mid == "TIMEOUT":
                         continue
                     num_times += 1
-                total_time /= num_times
-                if total_time > 0:
+                if num_times > 0:
+                    total_time /= num_times
                     times_round_trip = []
                     dropped_packets = 0
                     print("Test started, takes at least 10 seconds to complete.")
@@ -1102,16 +1104,20 @@ try:
                             continue
                         times_round_trip.append(time_end - time_start)
                     percent_packets_dropped = dropped_packets/(len(times_round_trip)+dropped_packets) * 100
-                    average_latency = sum(times_round_trip) / len(times_round_trip) * 1000
+                    median_latency = stats.median(times_round_trip) * 1000
                     max_latency = max(times_round_trip) * 1000
                     print(f"{GREEN}{len(times_round_trip)}{RESET} packets sucessfully exchanged, {GREEN}{dropped_packets}{RESET} packets lost{f" ({GREEN}{percent_packets_dropped:.2f}%{RESET})" if dropped_packets != 0 else ""}. Total {GREEN}{len(times_round_trip) + dropped_packets}{RESET}.")
-                    print(f"{GREEN}{average_latency:.2f}ms{RESET} average latency, maximum {GREEN}{max(times_round_trip) * 1000:.2f}ms{RESET}.")
+                    print(f"{GREEN}{median_latency:.2f}ms{RESET} median latency, maximum {GREEN}{max(times_round_trip) * 1000:.2f}ms{RESET}.")
                     if percent_packets_dropped > 1:
                         print(f"{RED}!WARNING!{RESET} Your average packet loss is high, which can indicate an unstable connection. The program may not work as intended with this connection.")
-                    if average_latency > 2000:
-                        print(f"{RED}!WARNING!{RESET} Your average latency is high, which can cause delay during the game.")
+                    if median_latency > 2000:
+                        print(f"{RED}!WARNING!{RESET} Your median latency is high, which can cause delay during the game.")
                     if max_latency > 5000:
                         print(f"{RED}!WARNING!{RESET} Your max latency is greater than 5 seconds, which exceeds the cap for the program.")
+                    if input("Export to csv (y or n): ").lower() == "y":
+                        with open("latency.csv", "w", newline="") as file:
+                            writer = csv.writer(file)
+                            writer.writerow(times_round_trip)
                 else:
                     print("All five pretest packets failed, indicating a disconnection from the server.")
                 break
