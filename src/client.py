@@ -1102,12 +1102,12 @@ try:
                         if time_mid == "SVRCLS" or time_mid == "TIMEOUT":
                             dropped_packets += 1
                             continue
-                        times_round_trip.append(time_end - time_start)
+                        times_round_trip.append((time_end - time_start)*1000)
                     percent_packets_dropped = dropped_packets/(len(times_round_trip)+dropped_packets) * 100
-                    median_latency = stats.median(times_round_trip) * 1000
-                    max_latency = max(times_round_trip) * 1000
+                    median_latency = stats.median(times_round_trip)
+                    max_latency = max(times_round_trip)
                     print(f"{GREEN}{len(times_round_trip)}{RESET} packets sucessfully exchanged, {GREEN}{dropped_packets}{RESET} packets lost{f" ({GREEN}{percent_packets_dropped:.2f}%{RESET})" if dropped_packets != 0 else ""}. Total {GREEN}{len(times_round_trip) + dropped_packets}{RESET}.")
-                    print(f"{GREEN}{median_latency:.2f}ms{RESET} median latency, maximum {GREEN}{max(times_round_trip) * 1000:.2f}ms{RESET}.")
+                    print(f"{GREEN}{median_latency:.2f}ms{RESET} median latency, maximum {GREEN}{max(times_round_trip):.2f}ms{RESET}.")
                     if percent_packets_dropped > 1:
                         print(f"{RED}!WARNING!{RESET} Your average packet loss is high, which can indicate an unstable connection. The program may not work as intended with this connection.")
                     if median_latency > 2000:
