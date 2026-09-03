@@ -6,6 +6,7 @@ import pygame
 import socket
 import configparser
 import threading
+import time
 import json
 from queue import Queue
 
@@ -56,11 +57,8 @@ while running:
         if client_socket:
             client_socket.close()
 if running:
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    client_socket.bind(("0.0.0.0", 0))
-    client_socket.settimeout(0.5)
-
-    client_socket.sendto(("SUBCD" + session).encode(), (IP, PORT))
+    state_version = -1
+    POLL_INTERVAL = 0.1
 else:
     sys.exit(0)
 
@@ -96,6 +94,25 @@ class TextBox():
 
         self.lines.insert(0, new_line)
         self.lines = self.lines[:5]
+
+    def sync_lines(self, entries):
+        existing = {}
+        for line in self.lines:
+            if line.get("seq") is not None:
+                existing[line["seq"]] = line
+        synced = []
+        for entry in reversed(entries):
+            seq, text = entry[0], entry[1]
+            line = existing.get(seq)
+            if line is None:
+                line = {
+                    "seq": seq,
+                    "full": str(text) if text is not None else "",
+                    "visible": "",
+                    "progress": 0
+                }
+            synced.append(line)
+        self.lines = synced[:5]
 
     def update(self):
         rendered_lines = []
@@ -427,15 +444,9 @@ class SeatTracker():
         self.highlighted = []
 
     def update(self):
-        # Derive the seat count from the name list itself so number and
-        # name_list can never disagree and cause an index error.
         count = len(self.name_list)
         surface = pygame.Surface((250, 55 * max(count, 1)), pygame.SRCALPHA)
         surface.fill((0, 0, 0, 0))
-        # self.highlighted holds [seat_number, timer] pairs. Seats are matched
-        # by their (1-based) number instead of by username so that players
-        # without a username can still be highlighted. The name, if there is
-        # one, is still drawn next to the highlighted seat below.
         highlighted_list = []
         for i in range(len(self.highlighted)):
             if self.highlighted[i][1] > 0:
@@ -477,17 +488,31 @@ class SeatTracker():
         self.screen.blit(surface, rect)
 
 
-def listen_for_server(sock):
+def poll_server():
+    global state_version
     while running:
         try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(0.5)
+            sock.sendto(("UPDTE" + session + "|" + str(state_version)).encode(), (IP, PORT))
             data, addr = sock.recvfrom(4096)
-            message_queue.put(data.decode("utf-8"))
+            msg = data.decode("utf-8")
+            if msg.startswith("SNAP|"):
+                payload = json.loads(msg.split("|", 1)[1])
+                if payload["version"] >= state_version:
+                    state_version = payload["version"]
+                    message_queue.put(payload)
+            elif msg == "CLOSED":
+                message_queue.put(msg)
+            print(msg)
+            sock.close()
         except socket.timeout:
-            continue
+            pass
         except Exception as e:
             print(e)
+        time.sleep(POLL_INTERVAL)
 
-threading.Thread(target=listen_for_server, args=(client_socket,), daemon=True).start()
+threading.Thread(target=poll_server, args=(), daemon=True).start()
 
 pygame.init()
 game_width = 1280
@@ -502,8 +527,6 @@ button_rect = button.get_rect(topleft = (615, 500))
 clock = pygame.time.Clock()
 timer = 0
 default_pos = True
-resubscribe_counter = 0
-resubscribe_interval = 400
 
 teamACounter = Counter(screen, 320, 200)
 teamBCounter = Counter(screen, 960, 200)
@@ -517,89 +540,30 @@ while running:
     while not message_queue.empty():
         try:
             msg = message_queue.get()
-            if msg.startswith("SCORE|"):
-                score = json.loads(msg.split("|", 1)[1])
-                teamACounter.set_score(score["a"])
-                teamBCounter.set_score(score["b"])
-                try:
-                    client_socket.sendto(b"SCRCK", (IP, PORT))
-                except:
-                    pass
-            elif msg.startswith("MESSAGE|"):
-                data = json.loads(msg.split("|", 1)[1])
-                if data[0] == "a":
-                    teamAText.add_line(data[1])
-                elif data[0] == "b":
-                    teamBText.add_line(data[1])
-                try:
-                    client_socket.sendto(b"SCRCK", (IP, PORT))
-                except:
-                    pass
-            elif msg.startswith("SEAT|"):
-                data = json.loads(msg.split("|", 1)[1])
-                if data[0] == "NEW_PLAYERS":
-                    for key, team in data[1].items():
-                        if key == "a":
-                            teamASeats.name_list = team.copy()
-                            teamASeats.number = len(team)
-                        elif key == "b":
-                            teamBSeats.name_list = team.copy()
-                            teamBSeats.number = len(team)
-                elif data[0] == "HIGHLIGHT":
-                    team = data[1]
-                    h = data[2]
-                    if (isinstance(h, list) and len(h) == 2
-                            and isinstance(h[0], int) and not isinstance(h[0], bool)
-                            and isinstance(h[1], (int, float))
-                            and not isinstance(h[1], bool)):
-                        if team == "a":
-                            teamASeats.highlighted.append([h[0], h[1]])
-                        elif team == "b":
-                            teamBSeats.highlighted.append([h[0], h[1]])
-                elif data[0] == "SET_HIGHLIGHT":
-                    teamASeats.highlighted, teamBSeats.highlighted = [], []
-                elif data[0] == "QUESTION":
-                    questionWheel.set_number(
-                        data[1],
-                        data[2] if len(data) > 2 else 0,
-                        data[3] if len(data) > 3 else 0,
-                        data[4] if len(data) > 4 else None)
-                try:
-                    client_socket.sendto(b"SCRCK", (IP, PORT))
-                except:
-                    pass
-            elif msg.startswith("RESET|"):
-                teamACounter.set_score(0)
-                teamBCounter.set_score(0)
-                teamAText.lines = []
-                teamBText.lines = []
-                teamASeats.highlighted = []
-                teamASeats.name_list = []
-                teamASeats.number = 0
-                teamBSeats.highlighted = []
-                teamBSeats.name_list = []
-                teamBSeats.number = 0
-                questionWheel.reset()
-                try:
-                    client_socket.sendto(b"SCRCK", (IP, PORT))
-                except:
-                    pass
-            elif msg == "CLOSED":
+            if msg == "CLOSED":
                 print("Client has closed this session.")
                 running = False
+                continue
+            teamACounter.set_score(msg["score"]["a"])
+            teamBCounter.set_score(msg["score"]["b"])
+            teamASeats.name_list = list(msg["seats"]["a"])
+            teamASeats.number = len(teamASeats.name_list)
+            teamBSeats.name_list = list(msg["seats"]["b"])
+            teamBSeats.number = len(teamBSeats.name_list)
+            teamASeats.highlighted = [[h[0], h[1]] for h in msg["highlights"]["a"]]
+            teamBSeats.highlighted = [[h[0], h[1]] for h in msg["highlights"]["b"]]
+            teamAText.sync_lines(msg["messages"]["a"])
+            teamBText.sync_lines(msg["messages"]["b"])
+            q = msg["question"]
+            if q and q[0]:
+                questionWheel.set_number(q[0], q[1], q[2], q[3])
+            else:
+                questionWheel.reset()
         except Exception:
             pass
 
     if timer > 0:
         timer -= 1
-
-    resubscribe_counter += 1
-    if resubscribe_counter >= resubscribe_interval:
-        resubscribe_counter = 0
-        try:
-            client_socket.sendto(("SUBCD" + session).encode(), (IP, PORT))
-        except:
-            pass
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -649,9 +613,5 @@ while running:
     clock.tick(40)
     pygame.display.set_caption("Scoreboard - session id:" + str(session))
 
-try:
-    client_socket.sendto(b"RMSCR", (IP, PORT))
-except Exception:
-    pass
 pygame.quit()
 

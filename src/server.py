@@ -10,7 +10,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-IP = "localhost"
+IP = "127.0.0.1"#"localhost"
 PORT = 9999
 server_socket.bind((IP, PORT))
 server_socket.settimeout(1)
@@ -24,20 +24,6 @@ game_list = {}
 last_cleared_date = None
 
 
-def broadcast_to_scoreboards(item, message):
-    item["last_active"] = time.time()
-    for a in list(item["pending_acks"]):
-        item["pending_acks"][a] += 1
-    unresponsive = [a for a, c in item["pending_acks"].items() if c >= 5]
-    for dead in unresponsive:
-        print(f"Removing unresponsive scoreboard: {dead}")
-        del item["pending_acks"][dead]
-    item["scoreboards"] = [s for s in item["scoreboards"] if s not in unresponsive]
-    for s in item["scoreboards"]:
-        server_socket.sendto(message.encode(), s)
-        item["pending_acks"].setdefault(s, 0)
-
-
 SCOREBOARD_FPS = 40
 
 
@@ -48,6 +34,29 @@ def empty_scoreboard_state():
         "seats": {"a": [], "b": []},
         "highlights": {"a": [], "b": []},
         "question": [0, 0, 0, "tossup"],   # [number, tossups, lightnings, phase]
+        "version": 0,
+        "msg_seq": 0,
+    }
+
+
+def bump_version(item):
+    item["last_active"] = time.time()
+    item["scoreboard_state"]["version"] += 1
+
+
+def state_snapshot(st):
+    now = time.time()
+    highlights = {}
+    for team in ("a", "b"):
+        st["highlights"][team] = [h for h in st["highlights"][team] if h[1] > now]
+        highlights[team] = [[h[0], int((h[1] - now) * SCOREBOARD_FPS)] for h in st["highlights"][team]]
+    return {
+        "version": st["version"],
+        "score": st["score"],
+        "seats": st["seats"],
+        "question": st["question"],
+        "messages": st["messages"],
+        "highlights": highlights,
     }
 
 
@@ -62,11 +71,6 @@ while True:
 
         for key in to_remove:
             print(f"Removing inactive game: {game_list[key]['game_id']}")
-            for scoreboard in game_list[key]["scoreboards"]:
-                try:
-                    server_socket.sendto(b"CLOSED", scoreboard)
-                except Exception:
-                    pass
             del game_list[key]
     except Exception as e:
         print(f"Error expiring inactive games: {type(e).__name__}: {e}")
@@ -141,42 +145,24 @@ while True:
                 server_socket.sendto(b"pass", addr)
             else:
                 server_socket.sendto(b"invalid", addr)
-        elif code == "SUBCD": #Add ip to scoreboards listening
-            item = game_list.get(data)
-            if item is not None:
-                item["last_active"] = time.time()
-                if addr not in item["scoreboards"]:
-                    item["scoreboards"].append(addr)
-                    st = item["scoreboard_state"]
-                    server_socket.sendto(("SEAT|" + json.dumps(["NEW_PLAYERS", st["seats"]])).encode(), addr)
-                    q = st.get("question") or [0, 0, 0, "tossup"]
-                    if q[0]:
-                        server_socket.sendto(("SEAT|" + json.dumps(["QUESTION"] + list(q))).encode(), addr)
-                    now = time.time()
-                    for team in ("a", "b"):
-                        for seat, expiry in st["highlights"][team]:
-                            remaining = int((expiry - now) * SCOREBOARD_FPS)
-                            if remaining > 0:
-                                server_socket.sendto(("SEAT|" + json.dumps(["HIGHLIGHT", team, [seat, remaining]])).encode(), addr)
-                    server_socket.sendto(("SCORE|" + json.dumps(st["score"])).encode(), addr)
-                    for team in ("a", "b"):
-                        for line in st["messages"][team]:
-                            server_socket.sendto(("MESSAGE|" + json.dumps([team, line])).encode(), addr)
-                item["pending_acks"].pop(addr, None)
-            server_socket.sendto(b"pass", addr)
-        elif code == "RMSCR": #Remove a scoreboard
-            for index, item in game_list.items():
-                scoreboards = item["scoreboards"]
-                if any(str(s) == str(addr) for s in scoreboards):
-                    item["last_active"] = time.time()
-                    item["scoreboards"] = [s for s in scoreboards if str(s) != str(addr)]
-                    item["pending_acks"].pop(addr, None)
-            server_socket.sendto(b"pass", addr)
+        elif code == "UPDTE":
+            parts = data.split("|")
+            item = game_list.get(parts[0])
+            if item is None:
+                server_socket.sendto(b"CLOSED", addr)
+                continue
+            item["last_active"] = time.time()
+            st = item["scoreboard_state"]
+            try:
+                known = int(parts[1])
+            except (IndexError, ValueError):
+                known = -1
+            if known == st["version"]:
+                server_socket.sendto(b"nochange", addr)
+            else:
+                server_socket.sendto(("SNAP|" + json.dumps(state_snapshot(st))).encode(), addr)
         elif code == "CLOSE": #Close client link
-            item = game_list.pop(data, None)
-            if item is not None:
-                for i in item["scoreboards"]:
-                    server_socket.sendto(b"CLOSED", i)
+            game_list.pop(data, None)
             # Always acknowledge, even for a game that already expired: closing an
             # unknown game is a no-op, and a silent drop makes the client wait out
             # its timeout and report a connection failure that did not happen.
@@ -189,7 +175,7 @@ while True:
                     item["scoreboard_state"]["score"] = json.loads(parts[1])
                 except Exception:
                     pass
-                broadcast_to_scoreboards(item, "SCORE|" + parts[1])
+                bump_version(item)
                 server_socket.sendto(b"pass", addr)
             else:
                 server_socket.sendto(b"error", addr)
@@ -229,13 +215,10 @@ while True:
                             ]
                 except Exception:
                     pass
-                broadcast_to_scoreboards(item, "SEAT|" + parts[1])
+                bump_version(item)
                 server_socket.sendto(b"pass", addr)
             else:
                 server_socket.sendto(b"error", addr)
-        elif code == "SCRCK": #Scoreboard acknowledged score receipt
-            for index, item in game_list.items():
-                item["pending_acks"].pop(addr, None)
         elif code == "SDMSG":
             parts = data.split("|", 1)
             item = game_list.get(parts[0]) if len(parts) >= 2 else None
@@ -244,12 +227,14 @@ while True:
                     payload = json.loads(parts[1])
                     team, line = payload[0], payload[1]
                     if team in ("a", "b"):
-                        msgs = item["scoreboard_state"]["messages"][team]
-                        msgs.append(line)
+                        st = item["scoreboard_state"]
+                        st["msg_seq"] += 1
+                        msgs = st["messages"][team]
+                        msgs.append([st["msg_seq"], line])
                         del msgs[:-5]
                 except Exception:
                     pass
-                broadcast_to_scoreboards(item, "MESSAGE|" + parts[1])
+                bump_version(item)
                 server_socket.sendto(b"pass", addr)
             else:
                 server_socket.sendto(b"error", addr)
@@ -293,8 +278,6 @@ while True:
                 num = random.randint(100000, 999999)
             game_list[str(num)] = {
                 "game_id": num,
-                "scoreboards": [],
-                "pending_acks": {},
                 "last_active": time.time(),
                 "session_name": data,
                 "game_logs": {},
@@ -334,8 +317,12 @@ while True:
         elif code == "RESCR":
             item = game_list.get(data.split("|")[0])
             if item is not None:
-                item["scoreboard_state"] = empty_scoreboard_state()
-                broadcast_to_scoreboards(item, "RESET|")
+                old = item["scoreboard_state"]
+                st = empty_scoreboard_state()
+                st["msg_seq"] = old["msg_seq"]
+                st["version"] = old["version"]
+                item["scoreboard_state"] = st
+                bump_version(item)
                 server_socket.sendto(b"pass", addr)
             else:
                 server_socket.sendto(b"error", addr)
