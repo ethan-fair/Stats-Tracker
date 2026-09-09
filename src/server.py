@@ -10,7 +10,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-IP = "127.0.0.1"#"localhost"
+IP = "localhost" #"127.0.0.1"
 PORT = 9999
 server_socket.bind((IP, PORT))
 server_socket.settimeout(1)
@@ -23,9 +23,7 @@ game_list = {}
 
 last_cleared_date = None
 
-
 SCOREBOARD_FPS = 40
-
 
 def empty_scoreboard_state():
     return {
@@ -34,14 +32,59 @@ def empty_scoreboard_state():
         "seats": {"a": [], "b": []},
         "highlights": {"a": [], "b": []},
         "question": [0, 0, 0, "tossup"],   # [number, tossups, lightnings, phase]
+        "names": {"a": "Team A", "b": "Team B"},
         "version": 0,
         "msg_seq": 0,
     }
 
+def update_active_games():
+    conn = None
+    try:
+        conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
+        conn.row_factory = sqlite3.Row
+
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS active_games (
+                game_id TEXT PRIMARY KEY,
+                session_name TEXT NOT NULL,
+                scoreboard_state TEXT NOT NULL,
+                stats TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+        cursor.execute("DELETE FROM active_games")
+        for game in game_list:
+            cursor.execute("""
+                INSERT INTO active_games (game_id, session_name, scoreboard_state, stats)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(game_id) DO UPDATE SET
+                    session_name=excluded.session_name,
+                    scoreboard_state=excluded.scoreboard_state,
+                    stats=excluded.stats
+                """, (
+                    game_list[game]["game_id"],
+                    game_list[game]["session_name"],
+                    json.dumps(game_list[game]["scoreboard_state"]),
+                    json.dumps(game_list[game]["session_stats"])
+            ))
+        cursor.close()
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        server_socket.sendto(b"error", addr)
+    finally:
+        if conn is not None:
+            conn.close()
 
 def bump_version(item):
     item["last_active"] = time.time()
     item["scoreboard_state"]["version"] += 1
+    update_active_games()
 
 
 def state_snapshot(st):
@@ -70,8 +113,9 @@ while True:
                 to_remove.append(key)
 
         for key in to_remove:
-            print(f"Removing inactive game: {game_list[key]['game_id']}")
+            print(f"Removing inactive game: {key}")
             del game_list[key]
+            update_active_games()
     except Exception as e:
         print(f"Error expiring inactive games: {type(e).__name__}: {e}")
 
@@ -163,9 +207,7 @@ while True:
                 server_socket.sendto(("SNAP|" + json.dumps(state_snapshot(st))).encode(), addr)
         elif code == "CLOSE": #Close client link
             game_list.pop(data, None)
-            # Always acknowledge, even for a game that already expired: closing an
-            # unknown game is a no-op, and a silent drop makes the client wait out
-            # its timeout and report a connection failure that did not happen.
+            update_active_games()
             server_socket.sendto(b"pass", addr)
         elif code == "HLSCR": #Send score data to scoreboards
             parts = data.split("|", 1)
@@ -277,10 +319,10 @@ while True:
             while str(num) in game_list:
                 num = random.randint(100000, 999999)
             game_list[str(num)] = {
-                "game_id": num,
+                "game_id": str(num),
                 "last_active": time.time(),
                 "session_name": data,
-                "game_logs": {},
+                "session_stats": {},
                 "scoreboard_state": empty_scoreboard_state()
             }
             server_socket.sendto(str(num).encode(), addr)
@@ -300,6 +342,10 @@ while True:
                         data TEXT NOT NULL
                     )
                 """)
+                c.execute("SELECT date FROM games")
+                dates = [row[0] for row in c.fetchall()]
+                while data[0] in dates:
+                    data[0] = datetime.datetime.fromtimestamp(datetime.datetime.strptime(data[0], "%b %d, %Y, %I:%M:%S.%f %p").timestamp() + 0.000001).strftime("%b %d, %Y, %I:%M:%S.%f %p")
                 c.execute("""
                 INSERT INTO games (date, data)
                 VALUES (?, ?)
@@ -311,6 +357,8 @@ while True:
                 ))
                 conn.commit()
                 conn.close()
+                game_list[str(data[2])]["scoreboard_state"]["names"]["a"] = data[1]["a_name"]
+                game_list[str(data[2])]["scoreboard_state"]["names"]["b"] = data[1]["b_name"]
                 server_socket.sendto("pass".encode(), addr)
             except Exception:
                 server_socket.sendto("error".encode(), addr)
@@ -322,6 +370,7 @@ while True:
                 st["msg_seq"] = old["msg_seq"]
                 st["version"] = old["version"]
                 item["scoreboard_state"] = st
+                item["session_stats"] = {}
                 bump_version(item)
                 server_socket.sendto(b"pass", addr)
             else:
@@ -480,9 +529,40 @@ while True:
                 applied.append(req_id)
                 c.execute("UPDATE games SET data = ? WHERE date = ?", (json.dumps(arr), date_time))
 
+                try:
+                    c.execute("SELECT * FROM players")
+                    result = c.fetchall()
+                except sqlite3.OperationalError as e:
+                    if "no such table" not in str(e).lower():
+                        raise
+                    c.execute("""
+                        CREATE TABLE IF NOT EXISTS players (
+                            username TEXT PRIMARY KEY,
+                            first_name TEXT NOT NULL,
+                            last_name TEXT NOT NULL
+                        )
+                    """)
+                    conn.commit()
+
+                    c.execute("SELECT * FROM players")
+                    result = c.fetchall()
+
+                rows = [dict(row) for row in result]
+                name_rows = {}
+                for i in rows:
+                    name_rows[i["username"]] = i["first_name"] + " " +i["last_name"][:1] + "."
                 conn.commit()
                 conn.close()
                 conn = None
+
+                for i in range(len(arr["player_data"])):
+                    user = arr["player_data"][i]["question_data"][0]
+                    if user in name_rows:
+                        arr["player_data"][i]["question_data"][0] = name_rows[user]
+                if str(payload["game_id"]) in game_list.keys():
+                    game_list[str(payload["game_id"])]["session_stats"] = arr
+                    update_active_games()
+
                 server_socket.sendto("pass".encode(), addr)
             except Exception:
                 if conn is not None:

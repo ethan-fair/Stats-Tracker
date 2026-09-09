@@ -142,7 +142,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         teamBName = teamBName or "Team B"
     else:
         name = teamAName + " vs. " + teamBName
-    stgme_response = sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name, "a_name": teamAName, "b_name": teamBName}]), repeat=3)
+    stgme_response = sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name, "a_name": teamAName, "b_name": teamBName}, game_id_num]), repeat=3)
     if stgme_response != "pass":
         print(RED + "Warning" + RESET + ": the server did not confirm that the game was registered. Stats will be kept locally and retried, but check the connection.")
     while tossup < tossups:
@@ -762,7 +762,7 @@ def writeToDatabase():
     length = len(changes_to_send)
     for i in range(length):
         change = changes_to_send.pop(0)
-        msg = sendMessage("WRROW" + json.dumps({"id": change["id"], "data": change["data"]}), repeat=1)
+        msg = sendMessage("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num}), repeat=1)
         if msg == "TIMEOUT" or msg == "SVRCLS" or msg == "nogame":
             changes_to_send.insert(0, change)
             break
@@ -882,7 +882,10 @@ try:
                 input(f"Press {GREEN}enter{RESET} to continue.")
 
     if scriptRunning:
-        data = sendMessage("PLNUM")
+        session_name = ""
+        if input(f"Use {GREEN}session name{RESET} (y or n): ").lower() == "y":
+            session_name = input(f"{GREEN}Name{RESET}: ")
+        data = sendMessage("PLNUM" + session_name)
         if data == "SVRCLS" or data == "TIMEOUT":
             print(f"Server is closed. {GREEN}Launch{RESET} the server and try again or {GREEN}change{RESET} the IP.")
             scriptRunning = False
@@ -900,9 +903,6 @@ try:
                         pass
             threading.Thread(target=keepalive_loop, daemon=True).start()
 
-    # Only replay queued stats once the config and server are known good. Without
-    # this guard a bad config leaves IP/PORT undefined and the replay dies with a
-    # NameError, after having already deleted changes.json below.
     if scriptRunning and os.path.exists("changes.json"):
         with open("changes.json") as f:
             loaded = json.load(f)

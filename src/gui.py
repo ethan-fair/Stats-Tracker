@@ -504,7 +504,6 @@ def poll_server():
                     message_queue.put(payload)
             elif msg == "CLOSED":
                 message_queue.put(msg)
-            print(msg)
             sock.close()
         except socket.timeout:
             pass

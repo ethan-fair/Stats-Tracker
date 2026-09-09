@@ -309,8 +309,117 @@ intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
+def get_all_scores():
+    conn = sqlite3.connect("players.db")
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM active_games")
+        result = cursor.fetchall()
+    except:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS active_games (
+                game_id TEXT PRIMARY KEY,
+                session_name TEXT NOT NULL,
+                scoreboard_state TEXT NOT NULL,
+                stats TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+        cursor.execute("SELECT * FROM active_games")
+        result = cursor.fetchall()
+    rows = [dict(row) for row in result]
+    conn.close()
+
+    games = {}
+    ids = []
+    for row in rows:
+        parsed = [json.loads(row["scoreboard_state"]), row["session_name"], json.loads(row["stats"])]
+        games[row["game_id"]] = parsed
+        ids.append(row["game_id"])
+    return_games = {}
+    for i in range(len(ids)):
+        id = ids[i]
+        ids[i] = id + " - " + games[ids[i]][1] if games[ids[i]][1] != "" else id
+        return_games[ids[i]] = games[ids[i][:6]]
+
+    return ids, return_games
+
+
+@tree.command(name="score", description="Get the score of a current game")
+@app_commands.describe(game="Select the game")
+async def score_command(interaction: discord.Interaction, game: str):
+    all_games, linked = get_all_scores()
+    if game not in all_games:
+        await interaction.response.send_message(
+            f"**{game}** was not found in the database. "
+            "Please choose a game from the autocomplete suggestions.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    data = linked[game][0]
+    stats = linked[game][2]["player_data"]
+
+    msg = "**Game**: " + game[:6] + "\n"
+    msg += "**Questions**: \n"
+    if data["question"][1] > 0:
+        msg += "*Tossups*: " + str(data["question"][0] if data["question"][0] < data["question"][1] else data["question"][1]) + "/" + str(data["question"][1]) + "\n"
+    if data["question"][2] > 0:
+        msg += "*Lightnings*: " + str(data["question"][0] - data["question"][1] if data["question"][0] - data["question"][1] > 0 else 0) + "/" + str(data["question"][2]) + "\n"
+    msg += "\n**Score**: \n"
+    msg += data["names"]["a"] + ": " + str(data["score"]["a"]) + "\n" + data["names"]["b"] + ": " + str(data["score"]["b"]) + "\n\n"
+
+    fields = ["lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash"]
+    player_stats = {}
+    for i in stats:
+        if i["question_data"][0] not in player_stats.keys():
+            player_stats[i["question_data"][0]] = 0
+        if i["question_data"][1] == "lightning":
+            player_stats[i["question_data"][0]] += 10 * i["question_data"][2][0]
+            player_stats[i["question_data"][0]] -= 10 * i["question_data"][2][1]
+        elif i["question_data"][1] in fields:
+            player_stats[i["question_data"][0]] += 15 * i["question_data"][2][0]
+            player_stats[i["question_data"][0]] += 10 * i["question_data"][2][1]
+            player_stats[i["question_data"][0]] -= 5 * i["question_data"][2][2]
+
+    msg += "**Players**: \n"
+    msg += "*" + data["names"]["a"] + "*: \n"
+    if data["seats"]["a"] == ['']:
+        msg += "\t*Players not named.*\n"
+    else:
+        for i in data["seats"]["a"]:
+            msg += "\t[" + i + "], *Pts: " + str(player_stats[i]) + "*\n"
+    msg += "*" + data["names"]["b"] + "*: \n"
+    if data["seats"]["b"] == ['']:
+        msg += "\t*Players not named.*\n"
+    else:
+        for i in data["seats"]["b"]:
+            msg += "\t[" + i + "], *Pts: " + str(player_stats[i]) + "*\n"
+
+    await interaction.followup.send(
+        msg,
+        ephemeral=True,
+    )
+
+@score_command.autocomplete("game")
+async def score_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Filter the full games list as the user types."""
+    all_games, linked = get_all_scores()
+    matches = [g for g in all_games if current.lower() in g.lower()]
+    return [
+        app_commands.Choice(name=g, value=g)
+        for g in matches
+    ][:25]
+
 
 @tree.command(name="stats", description="Generate a stats report")
+@app_commands.describe(username="Type in your username")
 async def stats_command(interaction: discord.Interaction, username: str):
     entered = username.strip().lower()
     if entered.lower() not in [u.lower() for u in get_usernames()]:
@@ -359,7 +468,7 @@ def get_all_games() -> tuple[list[str], dict[str, str]]:
         parsed = json.loads(row["data"])
         games[row["date"]] = parsed
         dates.append(row["date"])
-    dates = sorted(dates, key=lambda x: datetime.datetime.strptime(x, "%b %d, %Y, %I:%M:%S.%f %p"), reverse=True)
+    dates = sorted(dates, key=lambda x: datetime.datetime.strptime(x, "%b %d, %Y, %I:%M:%S.%f %p").timestamp(), reverse=True)
     return_games = {}
     for i in range(len(dates)):
         date = dates[i]
