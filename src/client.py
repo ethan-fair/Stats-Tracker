@@ -493,7 +493,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             writeToDatabase()
             sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
     while True:
-        if lightnings == 0:
+        if lightnings == 0 or tossups == 0:
             break
         full_name_list = {}
         name_list = {}
