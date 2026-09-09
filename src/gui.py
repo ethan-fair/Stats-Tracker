@@ -57,6 +57,8 @@ while running:
         if client_socket:
             client_socket.close()
 if running:
+    poll_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    poll_socket.settimeout(0.5)
     state_version = -1
     POLL_INTERVAL = 0.1
 else:
@@ -488,12 +490,10 @@ class SeatTracker():
         self.screen.blit(surface, rect)
 
 
-def poll_server():
+def poll_server(sock):
     global state_version
     while running:
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(0.5)
             sock.sendto(("UPDTE" + session + "|" + str(state_version)).encode(), (IP, PORT))
             data, addr = sock.recvfrom(4096)
             msg = data.decode("utf-8")
@@ -504,14 +504,13 @@ def poll_server():
                     message_queue.put(payload)
             elif msg == "CLOSED":
                 message_queue.put(msg)
-            sock.close()
         except socket.timeout:
             pass
         except Exception as e:
             print(e)
         time.sleep(POLL_INTERVAL)
 
-threading.Thread(target=poll_server, args=(), daemon=True).start()
+threading.Thread(target=poll_server, args=(poll_socket,), daemon=True).start()
 
 pygame.init()
 game_width = 1280

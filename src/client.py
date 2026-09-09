@@ -140,6 +140,10 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         name = prompt_name("Enter session name: ")
         teamAName = teamAName or "Team A"
         teamBName = teamBName or "Team B"
+    elif input("Use name other than \"" + teamAName + " vs. " + teamBName + "\" (y or n): ").strip().lower() == "y":
+        name = prompt_name("Enter session name: ")
+        teamAName = teamAName or "Team A"
+        teamBName = teamBName or "Team B"
     else:
         name = teamAName + " vs. " + teamBName
     stgme_response = sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name, "a_name": teamAName, "b_name": teamBName}, game_id_num]), repeat=3)
@@ -883,8 +887,9 @@ try:
 
     if scriptRunning:
         session_name = ""
-        if input(f"Use {GREEN}session name{RESET} (y or n): ").lower() == "y":
-            session_name = input(f"{GREEN}Name{RESET}: ")
+        if input(f"Use {GREEN}session name{RESET} (y or n): ").strip().lower() == "y":
+            entered_name = input(f"{GREEN}Name{RESET}: ")
+            session_name = "".join(ch for ch in entered_name if ch.isalnum() or ch in " _-").strip()[:32]
         data = sendMessage("PLNUM" + session_name)
         if data == "SVRCLS" or data == "TIMEOUT":
             print(f"Server is closed. {GREEN}Launch{RESET} the server and try again or {GREEN}change{RESET} the IP.")

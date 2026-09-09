@@ -310,41 +310,41 @@ client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
 def get_all_scores():
-    conn = sqlite3.connect("players.db")
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    conn = None
     try:
-        cursor.execute("SELECT * FROM active_games")
-        result = cursor.fetchall()
-    except:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS active_games (
-                game_id TEXT PRIMARY KEY,
-                session_name TEXT NOT NULL,
-                scoreboard_state TEXT NOT NULL,
-                stats TEXT NOT NULL
-            )
-        """)
-        conn.commit()
+        conn = sqlite3.connect("players.db")
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM active_games")
+            result = cursor.fetchall()
+        except sqlite3.OperationalError:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS active_games (
+                    game_id TEXT PRIMARY KEY,
+                    session_name TEXT NOT NULL,
+                    scoreboard_state TEXT NOT NULL,
+                    stats TEXT NOT NULL
+                )
+            """)
+            conn.commit()
 
-        cursor.execute("SELECT * FROM active_games")
-        result = cursor.fetchall()
-    rows = [dict(row) for row in result]
-    conn.close()
+            cursor.execute("SELECT * FROM active_games")
+            result = cursor.fetchall()
+        rows = [dict(row) for row in result]
+    finally:
+        if conn is not None:
+            conn.close()
 
-    games = {}
-    ids = []
+    labels = []
+    return_games = {}
     for row in rows:
         parsed = [json.loads(row["scoreboard_state"]), row["session_name"], json.loads(row["stats"])]
-        games[row["game_id"]] = parsed
-        ids.append(row["game_id"])
-    return_games = {}
-    for i in range(len(ids)):
-        id = ids[i]
-        ids[i] = id + " - " + games[ids[i]][1] if games[ids[i]][1] != "" else id
-        return_games[ids[i]] = games[ids[i][:6]]
+        label = row["game_id"] + " - " + row["session_name"] if row["session_name"] != "" else row["game_id"]
+        labels.append(label)
+        return_games[label] = parsed
 
-    return ids, return_games
+    return labels, return_games
 
 
 @tree.command(name="score", description="Get the score of a current game")
@@ -362,16 +362,19 @@ async def score_command(interaction: discord.Interaction, game: str):
     await interaction.response.defer(ephemeral=True)
 
     data = linked[game][0]
-    stats = linked[game][2]["player_data"]
+    stats = linked[game][2].get("player_data", [])
+    names = data.get("names") or {}
+    team_a_name = names.get("a") or "Team A"
+    team_b_name = names.get("b") or "Team B"
 
-    msg = "**Game**: " + game[:6] + "\n"
+    msg = "**Game**: " + game.split(" - ")[0] + "\n"
     msg += "**Questions**: \n"
     if data["question"][1] > 0:
         msg += "*Tossups*: " + str(data["question"][0] if data["question"][0] < data["question"][1] else data["question"][1]) + "/" + str(data["question"][1]) + "\n"
     if data["question"][2] > 0:
         msg += "*Lightnings*: " + str(data["question"][0] - data["question"][1] if data["question"][0] - data["question"][1] > 0 else 0) + "/" + str(data["question"][2]) + "\n"
     msg += "\n**Score**: \n"
-    msg += data["names"]["a"] + ": " + str(data["score"]["a"]) + "\n" + data["names"]["b"] + ": " + str(data["score"]["b"]) + "\n\n"
+    msg += team_a_name + ": " + str(data["score"]["a"]) + "\n" + team_b_name + ": " + str(data["score"]["b"]) + "\n\n"
 
     fields = ["lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash"]
     player_stats = {}
@@ -387,18 +390,14 @@ async def score_command(interaction: discord.Interaction, game: str):
             player_stats[i["question_data"][0]] -= 5 * i["question_data"][2][2]
 
     msg += "**Players**: \n"
-    msg += "*" + data["names"]["a"] + "*: \n"
-    if data["seats"]["a"] == ['']:
-        msg += "\t*Players not named.*\n"
-    else:
-        for i in data["seats"]["a"]:
-            msg += "\t[" + i + "], *Pts: " + str(player_stats[i]) + "*\n"
-    msg += "*" + data["names"]["b"] + "*: \n"
-    if data["seats"]["b"] == ['']:
-        msg += "\t*Players not named.*\n"
-    else:
-        for i in data["seats"]["b"]:
-            msg += "\t[" + i + "], *Pts: " + str(player_stats[i]) + "*\n"
+    for team_name, team_key in ((team_a_name, "a"), (team_b_name, "b")):
+        msg += "*" + team_name + "*: \n"
+        seats = data["seats"][team_key]
+        if not any(seats):
+            msg += "\t*Players not named.*\n"
+        else:
+            for i in seats:
+                msg += "\t[" + i + "], *Pts: " + str(player_stats.get(i, 0)) + "*\n"
 
     await interaction.followup.send(
         msg,
@@ -468,7 +467,7 @@ def get_all_games() -> tuple[list[str], dict[str, str]]:
         parsed = json.loads(row["data"])
         games[row["date"]] = parsed
         dates.append(row["date"])
-    dates = sorted(dates, key=lambda x: datetime.datetime.strptime(x, "%b %d, %Y, %I:%M:%S.%f %p").timestamp(), reverse=True)
+    dates = sorted(dates, key=lambda x: datetime.datetime.strptime(x, "%b %d, %Y, %I:%M:%S.%f %p"), reverse=True)
     return_games = {}
     for i in range(len(dates)):
         date = dates[i]

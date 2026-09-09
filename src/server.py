@@ -37,54 +37,105 @@ def empty_scoreboard_state():
         "msg_seq": 0,
     }
 
-def update_active_games():
+ACTIVE_GAMES_FLUSH_INTERVAL = 0.5
+ACTIVE_GAMES_RECONCILE_INTERVAL = 30.0
+
+active_games_dirty = set()
+active_games_last_flush = 0.0
+active_games_last_reconcile = 0.0
+
+
+def open_active_games_db():
+    conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS active_games (
+            game_id TEXT PRIMARY KEY,
+            session_name TEXT NOT NULL,
+            scoreboard_state TEXT NOT NULL,
+            stats TEXT NOT NULL
+        )
+    """)
+    return conn
+
+
+def clear_active_games():
     conn = None
     try:
-        conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
-        conn.row_factory = sqlite3.Row
-
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS active_games (
-                game_id TEXT PRIMARY KEY,
-                session_name TEXT NOT NULL,
-                scoreboard_state TEXT NOT NULL,
-                stats TEXT NOT NULL
-            )
-        """)
+        conn = open_active_games_db()
+        removed = conn.execute("DELETE FROM active_games").rowcount
         conn.commit()
-
-        cursor.execute("DELETE FROM active_games")
-        for game in game_list:
-            cursor.execute("""
-                INSERT INTO active_games (game_id, session_name, scoreboard_state, stats)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(game_id) DO UPDATE SET
-                    session_name=excluded.session_name,
-                    scoreboard_state=excluded.scoreboard_state,
-                    stats=excluded.stats
-                """, (
-                    game_list[game]["game_id"],
-                    game_list[game]["session_name"],
-                    json.dumps(game_list[game]["scoreboard_state"]),
-                    json.dumps(game_list[game]["session_stats"])
-            ))
-        cursor.close()
-        conn.commit()
-        conn.close()
-
+        if removed > 0:
+            print(f"Cleared {removed} stale game(s) left by a previous run")
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        server_socket.sendto(b"error", addr)
+        print(f"Error clearing active games: {type(e).__name__}: {e}")
     finally:
         if conn is not None:
             conn.close()
 
+
+def write_active_game(c, gid):
+    item = game_list.get(gid)
+    if item is None:
+        c.execute("DELETE FROM active_games WHERE game_id = ?", (gid,))
+        return
+    c.execute("""
+        INSERT INTO active_games (game_id, session_name, scoreboard_state, stats)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(game_id) DO UPDATE SET
+            session_name=excluded.session_name,
+            scoreboard_state=excluded.scoreboard_state,
+            stats=excluded.stats
+    """, (
+        gid,
+        item["session_name"],
+        json.dumps(item["scoreboard_state"]),
+        json.dumps(item["session_stats"])
+    ))
+
+
+def mark_active_game(game_id):
+    active_games_dirty.add(str(game_id))
+
+
+def flush_active_games(force=False):
+    global active_games_last_flush, active_games_last_reconcile
+    now = time.time()
+    reconcile = now - active_games_last_reconcile >= ACTIVE_GAMES_RECONCILE_INTERVAL
+    if not reconcile:
+        if not active_games_dirty:
+            return
+        if not force and now - active_games_last_flush < ACTIVE_GAMES_FLUSH_INTERVAL:
+            return
+    pending = list(active_games_dirty)
+    conn = None
+    try:
+        conn = open_active_games_db()
+        c = conn.cursor()
+        if reconcile:
+            c.execute("SELECT game_id FROM active_games")
+            for row in c.fetchall():
+                if row[0] not in game_list:
+                    c.execute("DELETE FROM active_games WHERE game_id = ?", (row[0],))
+            for gid in game_list:
+                write_active_game(c, gid)
+            active_games_last_reconcile = now
+        else:
+            for gid in pending:
+                write_active_game(c, gid)
+        conn.commit()
+        active_games_dirty.difference_update(pending)
+        active_games_last_flush = now
+    except Exception as e:
+        print(f"Error writing active games: {type(e).__name__}: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def bump_version(item):
     item["last_active"] = time.time()
     item["scoreboard_state"]["version"] += 1
-    update_active_games()
+    mark_active_game(item["game_id"])
 
 
 def state_snapshot(st):
@@ -98,10 +149,13 @@ def state_snapshot(st):
         "score": st["score"],
         "seats": st["seats"],
         "question": st["question"],
+        "names": st["names"],
         "messages": st["messages"],
         "highlights": highlights,
     }
 
+
+clear_active_games()
 
 while True:
     try:
@@ -115,9 +169,11 @@ while True:
         for key in to_remove:
             print(f"Removing inactive game: {key}")
             del game_list[key]
-            update_active_games()
+            mark_active_game(key)
     except Exception as e:
         print(f"Error expiring inactive games: {type(e).__name__}: {e}")
+
+    flush_active_games()
 
     try:
         data, addr = server_socket.recvfrom(4096)
@@ -207,7 +263,7 @@ while True:
                 server_socket.sendto(("SNAP|" + json.dumps(state_snapshot(st))).encode(), addr)
         elif code == "CLOSE": #Close client link
             game_list.pop(data, None)
-            update_active_games()
+            mark_active_game(data)
             server_socket.sendto(b"pass", addr)
         elif code == "HLSCR": #Send score data to scoreboards
             parts = data.split("|", 1)
@@ -325,6 +381,7 @@ while True:
                 "session_stats": {},
                 "scoreboard_state": empty_scoreboard_state()
             }
+            mark_active_game(num)
             server_socket.sendto(str(num).encode(), addr)
         elif code == "STGME":
             try:
@@ -334,6 +391,13 @@ while True:
                     server_socket.sendto(b"error", addr)
                     continue
 
+                if len(data) > 2:
+                    named = game_list.get(str(data[2]))
+                    if named is not None:
+                        named["scoreboard_state"]["names"]["a"] = data[1].get("a_name") or "Team A"
+                        named["scoreboard_state"]["names"]["b"] = data[1].get("b_name") or "Team B"
+                        bump_version(named)
+
                 conn = sqlite3.connect("players.db", timeout=DB_TIMEOUT)
                 c = conn.cursor()
                 c.execute("""
@@ -342,9 +406,10 @@ while True:
                         data TEXT NOT NULL
                     )
                 """)
-                c.execute("SELECT date FROM games")
-                dates = [row[0] for row in c.fetchall()]
-                while data[0] in dates:
+                while True:
+                    c.execute("SELECT 1 FROM games WHERE date = ?", (data[0],))
+                    if c.fetchone() is None:
+                        break
                     data[0] = datetime.datetime.fromtimestamp(datetime.datetime.strptime(data[0], "%b %d, %Y, %I:%M:%S.%f %p").timestamp() + 0.000001).strftime("%b %d, %Y, %I:%M:%S.%f %p")
                 c.execute("""
                 INSERT INTO games (date, data)
@@ -357,8 +422,6 @@ while True:
                 ))
                 conn.commit()
                 conn.close()
-                game_list[str(data[2])]["scoreboard_state"]["names"]["a"] = data[1]["a_name"]
-                game_list[str(data[2])]["scoreboard_state"]["names"]["b"] = data[1]["b_name"]
                 server_socket.sendto("pass".encode(), addr)
             except Exception:
                 server_socket.sendto("error".encode(), addr)
@@ -559,9 +622,10 @@ while True:
                     user = arr["player_data"][i]["question_data"][0]
                     if user in name_rows:
                         arr["player_data"][i]["question_data"][0] = name_rows[user]
-                if str(payload["game_id"]) in game_list.keys():
-                    game_list[str(payload["game_id"])]["session_stats"] = arr
-                    update_active_games()
+                tracked = game_list.get(str(payload.get("game_id")))
+                if tracked is not None:
+                    tracked["session_stats"] = {"player_data": arr["player_data"]}
+                    mark_active_game(tracked["game_id"])
 
                 server_socket.sendto("pass".encode(), addr)
             except Exception:
