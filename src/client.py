@@ -17,6 +17,8 @@ changes_to_send = []
 change_id_counter = 0
 pending_players = []
 
+do_acks_pull = True
+
 def queue_change(data):
     global change_id_counter
     change_id_counter += 1
@@ -83,6 +85,35 @@ def prompt_name(prompt):
             print("That cannot contain the \"|\" character.")
             continue
         return value
+
+def poll_server(sock):
+    global changes_to_send
+    global do_acks_pull
+    while True:
+        try:
+            if do_acks_pull:
+                sock.sendto(("PLACK" + str(game_id_num)).encode(), (IP, PORT))
+                data, addr = sock.recvfrom(4096)
+                msg = data.decode("utf-8")
+
+                if msg.startswith("ACKS|"):
+                    acks = json.loads(msg.split("|")[1])
+
+                    remade_acks = []
+                    if len(acks) > 0:
+                        for i in acks:
+                            remade_acks = remade_acks + [i for i in range(i[0], i[1] + 1)]
+
+                        for i in changes_to_send:
+                            if int(i["id"]) in remade_acks:
+                                changes_to_send.remove(i)
+            else:
+                pass
+        except socket.timeout:
+            pass
+        except Exception as e:
+            print(e)
+        time.sleep(0.25)
 
 def seat_index(value, team):
     seat = int(value)
@@ -761,25 +792,18 @@ def ensure_player(username, first_name, last_name):
 
 def writeToDatabase():
     global changes_to_send
+    global do_acks_pull
     # Players first: a stat is useless if the player it belongs to was never saved.
     flush_pending_players()
+    do_acks_pull = False
+    time.sleep(0.3)
     length = len(changes_to_send)
     for i in range(length):
-        change = changes_to_send.pop(0)
-        msg = sendMessage("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num}), repeat=1)
-        if msg == "TIMEOUT" or msg == "SVRCLS" or msg == "nogame":
-            changes_to_send.insert(0, change)
-            break
-        if msg != "pass":
-            # The server rejected the change. Retry a few times in case the
-            # failure was transient, then drop it with a warning rather than
-            # letting one bad change block everything queued behind it.
-            change["attempts"] = change.get("attempts", 0) + 1
-            if change["attempts"] < 3:
-                changes_to_send.insert(0, change)
-                break
-            print(RED + "Warning" + RESET + ": the server rejected a stat for " + str(change["data"][0]) + " (" + str(change["data"][1]) + ") and it was not saved.")
-
+        change = changes_to_send[i]
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        client_socket.sendto(("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num})).encode(), (IP, PORT))
+        client_socket.close()
+    do_acks_pull = True
 
 def sendMessage(message: str, repeat = 3, timeout = 2.0):
     for i in range(repeat):
@@ -907,6 +931,9 @@ try:
                     except Exception:
                         pass
             threading.Thread(target=keepalive_loop, daemon=True).start()
+        poll_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        poll_socket.settimeout(0.5)
+        threading.Thread(target=poll_server, args=(poll_socket,), daemon=True).start()
 
     if scriptRunning and os.path.exists("changes.json"):
         with open("changes.json") as f:

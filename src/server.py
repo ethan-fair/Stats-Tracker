@@ -379,10 +379,27 @@ while True:
                 "last_active": time.time(),
                 "session_name": data,
                 "session_stats": {},
-                "scoreboard_state": empty_scoreboard_state()
+                "scoreboard_state": empty_scoreboard_state(),
+                "acks": []
             }
             mark_active_game(num)
             server_socket.sendto(str(num).encode(), addr)
+        elif code == "PLACK":
+            acks = game_list[data]["acks"].copy()
+            acks.sort()
+            next_start_index = 0
+            sent_list = []
+            message = ""
+            if len(acks) > 1:
+                for i in range(1, len(acks)):
+                    if acks[i] != acks[i - 1] + 1:
+                        sent_list.append([acks[next_start_index], acks[i - 1]])
+                        next_start_index = i
+                sent_list.append([acks[next_start_index], acks[len(acks) - 1]])
+                message = "ACKS|" + json.dumps(sent_list)
+            if len(acks) == 1:
+                message = "ACKS|" + json.dumps([[acks[0], acks[0]]])
+            server_socket.sendto(message.encode(), addr)
         elif code == "STGME":
             try:
                 try:
@@ -591,6 +608,10 @@ while True:
                 arr["player_data"].append({"question_data": add, "question_num": question, "team": team})
                 applied.append(req_id)
                 c.execute("UPDATE games SET data = ? WHERE date = ?", (json.dumps(arr), date_time))
+
+                print(applied)
+
+                game_list[str(payload["game_id"])]["acks"] = applied
 
                 try:
                     c.execute("SELECT * FROM players")
