@@ -16,22 +16,33 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 changes_to_send = []
 change_id_counter = 0
 pending_players = []
+game_id_num = None
 
-do_acks_pull = True
+changes_lock = threading.RLock()
+send_io_lock = threading.Lock()
+send_socket = None
+
+ACK_POLL_INTERVAL = 0.25
+ACK_DRAIN_TIMEOUT = 10.0
+ACK_SILENT_POLLS = 6
 
 def queue_change(data):
     global change_id_counter
-    change_id_counter += 1
-    changes_to_send.append({"id": change_id_counter, "data": data})
+    with changes_lock:
+        change_id_counter += 1
+        changes_to_send.append({"id": change_id_counter, "data": data})
 
 def close():
     global changes_to_send
-    if changes_to_send:
-        writeToDatabase()
-    if changes_to_send:
-        print("Some stats could not be sent to the server. They have been saved and will be sent the next time this client starts.")
-        with open("changes.json", "w") as f:
-            json.dump(changes_to_send, f)
+    with changes_lock:
+        pending = bool(changes_to_send)
+    if pending:
+        flush_changes()
+    with changes_lock:
+        if changes_to_send:
+            print("Some stats could not be sent to the server. They have been saved and will be sent the next time this client starts.")
+            with open("changes.json", "w") as f:
+                json.dump([{"id": c["id"], "data": c["data"]} for c in changes_to_send], f)
             changes_to_send = []
 
 def handle_exit_signals(signum, frame):
@@ -86,34 +97,27 @@ def prompt_name(prompt):
             continue
         return value
 
+def change_is_acked(change_id, ranges):
+    for span in ranges:
+        if span[0] <= change_id <= span[1]:
+            return True
+    return False
+
 def poll_server(sock):
-    global changes_to_send
-    global do_acks_pull
     while True:
         try:
-            if do_acks_pull:
+            if game_id_num is not None:
                 sock.sendto(("PLACK" + str(game_id_num)).encode(), (IP, PORT))
-                data, addr = sock.recvfrom(4096)
+                data, addr = sock.recvfrom(65535)
                 msg = data.decode("utf-8")
-
                 if msg.startswith("ACKS|"):
-                    acks = json.loads(msg.split("|")[1])
-
-                    remade_acks = []
-                    if len(acks) > 0:
-                        for i in acks:
-                            remade_acks = remade_acks + [i for i in range(i[0], i[1] + 1)]
-
-                        for i in changes_to_send:
-                            if int(i["id"]) in remade_acks:
-                                changes_to_send.remove(i)
-            else:
-                pass
+                    with changes_lock:
+                        changes_to_send[:] = [c for c in changes_to_send if not change_is_acked(int(c["id"]), json.loads(msg.split("|", 1)[1]))]
         except socket.timeout:
             pass
-        except Exception as e:
-            print(e)
-        time.sleep(0.25)
+        except Exception:
+            pass
+        time.sleep(ACK_POLL_INTERVAL)
 
 def seat_index(value, team):
     seat = int(value)
@@ -790,20 +794,95 @@ def ensure_player(username, first_name, last_name):
     print(RED + "Warning" + RESET + ": the server did not confirm that " + first_name + " " + last_name + " was added. This will keep retrying.")
     return False
 
+def wrrow_packet(change):
+    return ("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num})).encode()
+
+
+def remove_change(change_id):
+    with changes_lock:
+        for i in range(len(changes_to_send)):
+            if changes_to_send[i]["id"] == change_id:
+                del changes_to_send[i]
+                return
+
+
+def get_send_socket():
+    global send_socket
+    if send_socket is None:
+        send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        send_socket.setblocking(False)
+    return send_socket
+
+
+def drain_replies(sock):
+    while True:
+        try:
+            sock.recvfrom(4096)
+        except (BlockingIOError, socket.timeout):
+            return
+        except OSError:
+            return
+
+
+def send_changes_synchronously():
+    with changes_lock:
+        pending = list(changes_to_send)
+    for change in pending:
+        reply = sendMessage("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num}), repeat=1)
+        if reply == "pass":
+            remove_change(change["id"])
+        elif reply == "TIMEOUT" or reply == "SVRCLS":
+            break
+    with changes_lock:
+        return not changes_to_send
+
+
+def flush_changes(timeout=ACK_DRAIN_TIMEOUT):
+    """Block until every queued change is acknowledged, or until timeout.
+
+    Gives up as soon as the queue stops shrinking, so quitting against a server
+    that is already gone costs a couple of seconds instead of the whole timeout.
+    """
+    deadline = time.time() + timeout
+    remaining = None
+    stalled = 0
+    while time.time() < deadline:
+        writeToDatabase()
+        with changes_lock:
+            if not changes_to_send:
+                return True
+            current = len(changes_to_send)
+        stalled = stalled + 1 if current == remaining else 0
+        remaining = current
+        if stalled >= ACK_SILENT_POLLS:
+            break
+        time.sleep(ACK_POLL_INTERVAL)
+    return send_changes_synchronously()
+
+
 def writeToDatabase():
-    global changes_to_send
-    global do_acks_pull
     # Players first: a stat is useless if the player it belongs to was never saved.
     flush_pending_players()
-    do_acks_pull = False
-    time.sleep(0.3)
-    length = len(changes_to_send)
-    for i in range(length):
-        change = changes_to_send[i]
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        client_socket.sendto(("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num})).encode(), (IP, PORT))
-        client_socket.close()
-    do_acks_pull = True
+    with changes_lock:
+        batch = [("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num})).encode() for change in changes_to_send]
+    if not batch:
+        return
+    with send_io_lock:
+        sock = get_send_socket()
+        for packet in batch:
+            try:
+                sock.sendto(packet, (IP, PORT))
+            except BlockingIOError:
+                break
+            except OSError:
+                break
+        while True:
+            try:
+                sock.recvfrom(4096)
+            except (BlockingIOError, socket.timeout):
+                break
+            except OSError:
+                break
 
 def sendMessage(message: str, repeat = 3, timeout = 2.0):
     for i in range(repeat):
@@ -931,9 +1010,10 @@ try:
                     except Exception:
                         pass
             threading.Thread(target=keepalive_loop, daemon=True).start()
-        poll_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        poll_socket.settimeout(0.5)
-        threading.Thread(target=poll_server, args=(poll_socket,), daemon=True).start()
+
+            poll_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            poll_socket.settimeout(0.5)
+            threading.Thread(target=poll_server, args=(poll_socket,), daemon=True).start()
 
     if scriptRunning and os.path.exists("changes.json"):
         with open("changes.json") as f:
@@ -949,10 +1029,16 @@ try:
             if isinstance(item.get("id"), int) and item["id"] > change_id_counter:
                 change_id_counter = item["id"]
         changes_to_send = migrated
-        writeToDatabase()
-        # Keep the file if anything is still queued; close() rewrites it on exit.
-        if not changes_to_send:
+        # These ids were handed out by an earlier run and belong to that run's
+        # game rows, so they are sent the acknowledged way rather than waiting on
+        # a PLACK reply that only describes this session.
+        if send_changes_synchronously():
             os.remove("changes.json")
+        else:
+            print("Some older stats could not be sent to the server. They have been kept and will be sent the next time this client starts.")
+            with open("changes.json", "w") as f:
+                json.dump([{"id": c["id"], "data": c["data"]} for c in changes_to_send], f)
+            changes_to_send = []
 
     while scriptRunning:
         print("Select a command: ")

@@ -25,6 +25,21 @@ last_cleared_date = None
 
 SCOREBOARD_FPS = 40
 
+def record_ack(game_id, req_id):
+    """Remember that a row is committed, so PLACK can tell the client to retire it.
+
+    Keyed by the client's game id rather than by the database row the stat landed
+    in: one client run numbers its changes in a single ascending sequence but can
+    write into several game rows -- a second game, or rows recovered from a
+    previous run -- and the client needs one answer that covers all of them.
+    """
+    item = game_list.get(str(game_id))
+    if item is None:
+        return
+    item["last_active"] = time.time()
+    item["acks"].add(req_id)
+
+
 def empty_scoreboard_state():
     return {
         "score": {"a": 0, "b": 0},
@@ -385,21 +400,18 @@ while True:
             mark_active_game(num)
             server_socket.sendto(str(num).encode(), addr)
         elif code == "PLACK":
-            acks = game_list[data]["acks"].copy()
-            acks.sort()
-            next_start_index = 0
+            item = game_list.get(data.strip())
+            if item is None:
+                server_socket.sendto(b"nogame", addr)
+                continue
+            item["last_active"] = time.time()
             sent_list = []
-            message = ""
-            if len(acks) > 1:
-                for i in range(1, len(acks)):
-                    if acks[i] != acks[i - 1] + 1:
-                        sent_list.append([acks[next_start_index], acks[i - 1]])
-                        next_start_index = i
-                sent_list.append([acks[next_start_index], acks[len(acks) - 1]])
-                message = "ACKS|" + json.dumps(sent_list)
-            if len(acks) == 1:
-                message = "ACKS|" + json.dumps([[acks[0], acks[0]]])
-            server_socket.sendto(message.encode(), addr)
+            for ack in sorted(item["acks"]):
+                if sent_list and ack == sent_list[-1][1] + 1:
+                    sent_list[-1][1] = ack
+                else:
+                    sent_list.append([ack, ack])
+            server_socket.sendto(("ACKS|" + json.dumps(sent_list)).encode(), addr)
         elif code == "STGME":
             try:
                 try:
@@ -602,6 +614,7 @@ while True:
                 if req_id in applied:
                     conn.close()
                     conn = None
+                    game_list[str(payload["game_id"])]["acks"] = applied
                     server_socket.sendto(b"pass", addr)
                     continue
 
@@ -609,9 +622,6 @@ while True:
                 applied.append(req_id)
                 c.execute("UPDATE games SET data = ? WHERE date = ?", (json.dumps(arr), date_time))
 
-                print(applied)
-
-                game_list[str(payload["game_id"])]["acks"] = applied
 
                 try:
                     c.execute("SELECT * FROM players")
@@ -648,6 +658,7 @@ while True:
                     tracked["session_stats"] = {"player_data": arr["player_data"]}
                     mark_active_game(tracked["game_id"])
 
+                game_list[str(payload["game_id"])]["acks"] = applied
                 server_socket.sendto("pass".encode(), addr)
             except Exception:
                 if conn is not None:
