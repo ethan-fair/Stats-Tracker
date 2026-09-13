@@ -14,6 +14,7 @@ import statistics as stats
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 changes_to_send = []
+tentative_changes = []
 change_id_counter = 0
 pending_players = []
 game_id_num = None
@@ -27,14 +28,16 @@ ACK_DRAIN_TIMEOUT = 10.0
 ACK_SILENT_POLLS = 6
 
 def queue_change(data):
-    global change_id_counter
-    with changes_lock:
-        change_id_counter += 1
-        changes_to_send.append({"id": change_id_counter, "data": data})
+    tentative_changes.append(data)
 
 def close():
     global changes_to_send
+    global change_id_counter
     with changes_lock:
+        for change in tentative_changes:
+            change_id_counter += 1
+            changes_to_send.append({"id": change_id_counter, "data": change})
+        del tentative_changes[:]
         pending = bool(changes_to_send)
     if pending:
         flush_changes()
@@ -44,6 +47,10 @@ def close():
             with open("changes.json", "w") as f:
                 json.dump([{"id": c["id"], "data": c["data"]} for c in changes_to_send], f)
             changes_to_send = []
+    try:
+        sendMessage("CLOSE" + str(game_id_num), repeat=1)
+    except:
+        pass
 
 def handle_exit_signals(signum, frame):
     sys.exit(0)
@@ -126,9 +133,19 @@ def seat_index(value, team):
     return team[seat - 1]
 
 def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, teamBName = None):
+    global change_id_counter
     global changes_to_send
+    global tentative_changes
     score = {"a": 0, "b": 0}
     tossup = 0
+    scoreboard_messages = {"a": [], "b": []}
+    message_seq = 0
+    scoreboard_seats = {"a": [], "b": []}
+    tossup_messages = {}
+    tossup_seats = {}
+    tossup_scores = {}
+    tossup_rosters = {}
+    do_revert = False
     game_date_time = sendMessage("PLTME")
     if game_date_time == "SVRCLS" or game_date_time == "TIMEOUT":
         game_date_time = datetime.datetime.now().strftime("%b %d, %Y, %I:%M:%S.%f %p")
@@ -193,12 +210,21 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             full_name_list[player["username"]] = BLUE + player["first_name"] + " " + player["last_name"][0] + "." + RESET
             name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
-        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}]))
+        scoreboard_seats = {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]))
         to_highlight = []
         for num, i in enumerate(teamA):
             if not i.startswith("!"):
                 sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", "a", [num + 1, ]]))
         tossup += 1
+        if tossup not in tossup_messages.keys():
+            tossup_messages[tossup] = {"a": [entry[:] for entry in scoreboard_messages["a"]], "b": [entry[:] for entry in scoreboard_messages["b"]]}
+        if tossup not in tossup_seats.keys():
+            tossup_seats[tossup] = {"a": scoreboard_seats["a"][:], "b": scoreboard_seats["b"][:]}
+        if tossup not in tossup_scores.keys():
+            tossup_scores[tossup] = score.copy()
+        if tossup not in tossup_rosters.keys():
+            tossup_rosters[tossup] = {"a": teamA[:], "b": teamB[:]}
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", tossup, tossups, lightnings, "tossup"]))
         category = ""
         while True:
@@ -213,11 +239,13 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             print(f"\t{RED}7.{RESET} Religion, Mythology, Politics, Social Science (RMPSS)")  
             print(f"\t{RED}8.{RESET} Trash / Pop Culture")
             print(f"\t{RED}9.{RESET} Substitutions")
+            if tossup > 1 and do_revert:
+                print(f"\t{RED}10.{RESET} Correct Tossup " + str(tossup - 1))
             catNum = input("Selection: ").strip()
             valid = False
             try:
                 catNum = int(catNum)
-                if catNum > 0 and catNum <= 9:
+                if catNum > 0 and catNum <= (10 if tossup > 1 and do_revert else 9):
                     valid = True
             except:
                 pass
@@ -241,11 +269,34 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                         category = "trash"
                     case 9:
                         category = "subs"
+                    case 10:
+                        category = "correction"
                 break
             else:
                 print("That is not a valid input")
                 continue
-        if category == "subs":
+        if category == "correction":
+            previous_tossup = tossup - 1
+            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, tossups, lightnings, "tossup"]))
+            scoreboard_seats = {"a": tossup_seats[previous_tossup]["a"][:], "b": tossup_seats[previous_tossup]["b"][:]}
+            teamA[:] = tossup_rosters[previous_tossup]["a"]
+            teamB[:] = tossup_rosters[previous_tossup]["b"]
+            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]))
+            score = tossup_scores[previous_tossup].copy()
+            sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
+            scoreboard_messages = {"a": [entry[:] for entry in tossup_messages[previous_tossup]["a"]], "b": [entry[:] for entry in tossup_messages[previous_tossup]["b"]]}
+            sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps(["a", scoreboard_messages["a"]]))
+            sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps(["b", scoreboard_messages["b"]]))
+            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
+            for stale in [key for key in tossup_messages if key > previous_tossup]:
+                tossup_messages.pop(stale, None)
+                tossup_seats.pop(stale, None)
+                tossup_scores.pop(stale, None)
+                tossup_rosters.pop(stale, None)
+            tentative_changes = [i for i in tentative_changes if i[4] < previous_tossup]
+            tossup -= 2
+            do_revert = False
+        elif category == "subs":
             tossup -= 1
             while True:
                 full_name_list = {}
@@ -336,7 +387,6 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                             full_name_list[id] = BLUE + first_name + " " + last_name[0] + "." + RESET
                             name_list[id] = first_name + " " + last_name[0] + "."
                             rows.append({"username": id, "first_name": first_name, "last_name": last_name})
-                            writeToDatabase()
                             break
                         else:
                             continue
@@ -346,12 +396,17 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                     
                 if team == "a":
                     teamA[index] = id
-                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" if i.startswith("!") else name_list[i] for i in teamA]}]))
+                    scoreboard_seats["a"] = ["" if i.startswith("!") else name_list[i] for i in teamA]
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": scoreboard_seats["a"]}]))
                 elif team == "b":
                     teamB[index] = id
-                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": ["" if i.startswith("!") else name_list[i] for i in teamB]}]))
+                    scoreboard_seats["b"] = ["" if i.startswith("!") else name_list[i] for i in teamB]
+                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": scoreboard_seats["b"]}]))
                 print(full_name_list[playerId] + " has been replaced by " + full_name_list[id] + ".")
-                sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + " -> " + name_list[id]]))
+                message_seq += 1
+                scoreboard_messages[team].append([message_seq, name_list[playerId] + " -> " + name_list[id]])
+                del scoreboard_messages[team][:-5]
+                sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps([team, scoreboard_messages[team]]))
                 sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [index + 1, 400]]))
         else:
             team_a_answer = False
@@ -416,7 +471,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                             if input(f"{GREEN}Confirm{RESET} that the player is " + full_name_list[playerId] + " (y or n): ").lower().strip() != "y":
                                 continue
                         else:
-                            if input(f"{GREEN}Confirm{RESET} that the player is in seat " + str(seat_num) + " on team " + team.upper() + " (y or n): ").lower().strip() != "y":
+                            if input(f"{GREEN}Confirm{RESET} that the player is in {GREEN}seat " + str(seat_num) + f"{RESET} on {GREEN}team " + team.upper() +  RESET + " (y or n): ").lower().strip() != "y":
                                 continue
                 elif player == "pass":
                     print("No player answered.")
@@ -461,19 +516,28 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                     queue_change([playerId, category, [1, 0, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] += 15
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
-                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 15"]))
+                    message_seq += 1
+                    scoreboard_messages[team].append([message_seq, name_list[playerId] + ": 15"])
+                    del scoreboard_messages[team][:-5]
+                    sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps([team, scoreboard_messages[team]]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 10**8]]))
                 elif finalType == 2:
                     queue_change([playerId, category, [0, 1, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] += 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
-                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 10"]))
+                    message_seq += 1
+                    scoreboard_messages[team].append([message_seq, name_list[playerId] + ": 10"])
+                    del scoreboard_messages[team][:-5]
+                    sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps([team, scoreboard_messages[team]]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 10**8]]))
                 elif finalType == 3:
                     queue_change([playerId, category, [0, 0, 1, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] -= 5
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
-                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": -5"]))
+                    message_seq += 1
+                    scoreboard_messages[team].append([message_seq, name_list[playerId] + ": -5"])
+                    del scoreboard_messages[team][:-5]
+                    sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps([team, scoreboard_messages[team]]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 200]]))
                     if playerId in teamA:
                         team_a_answer = True
@@ -484,7 +548,10 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                         team_a_answer = True
                     elif playerId in teamB:
                         team_b_answer = True
-                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": 0"]))
+                    message_seq += 1
+                    scoreboard_messages[team].append([message_seq, name_list[playerId] + ": 0"])
+                    del scoreboard_messages[team][:-5]
+                    sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps([team, scoreboard_messages[team]]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 200]]))
                 if team_a_answer and team_b_answer:
                     bonus = False
@@ -525,8 +592,46 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 print("Score: " + BLUE + str(score["a"]) + " - " + str(score["b"]) + RESET)
             elif lightnings > 0:
                 print("Score: " + BLUE + str(score["a"]) + " - " + str(score["b"]) + RESET)
+
+            for change in tentative_changes.copy():
+                if change[4] <= tossup - 1:
+                    with changes_lock:
+                        change_id_counter += 1
+                        changes_to_send.append({"id": change_id_counter, "data": change})
+                    tentative_changes.remove(change)
+            
             writeToDatabase()
             sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
+            do_revert = True
+
+        if tossup == tossups:
+            if input(f"{GREEN}Correct{RESET} Tossup " + str(tossup) + " (y or n): ").strip().lower() == "y":
+                previous_tossup = tossup
+                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, tossups, lightnings, "tossup"]))
+                scoreboard_seats = {"a": tossup_seats[previous_tossup]["a"][:], "b": tossup_seats[previous_tossup]["b"][:]}
+                teamA[:] = tossup_rosters[previous_tossup]["a"]
+                teamB[:] = tossup_rosters[previous_tossup]["b"]
+                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]))
+                score = tossup_scores[previous_tossup].copy()
+                sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
+                scoreboard_messages = {"a": [entry[:] for entry in tossup_messages[previous_tossup]["a"]], "b": [entry[:] for entry in tossup_messages[previous_tossup]["b"]]}
+                sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps(["a", scoreboard_messages["a"]]))
+                sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps(["b", scoreboard_messages["b"]]))
+                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
+                for stale in [key for key in tossup_messages if key > previous_tossup]:
+                    tossup_messages.pop(stale, None)
+                    tossup_seats.pop(stale, None)
+                    tossup_scores.pop(stale, None)
+                    tossup_rosters.pop(stale, None)
+                tentative_changes = [i for i in tentative_changes if i[4] < previous_tossup]
+                tossup -= 1
+                do_revert = False
+    for change in tentative_changes.copy():
+        with changes_lock:
+            change_id_counter += 1
+            changes_to_send.append({"id": change_id_counter, "data": change})
+        tentative_changes.remove(change)
+    writeToDatabase()
     while True:
         if lightnings == 0 or tossups == 0:
             break
@@ -620,7 +725,6 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                         teamA[index] = id
                     elif team == "b":
                         teamB[index] = id
-                    writeToDatabase()
                     all_users.append(id)
                     full_name_list[id] = BLUE + first_name + " " + last_name[0] + "." + RESET
                     name_list[id] = first_name + " " + last_name[0] + "."
@@ -633,16 +737,19 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 continue
         if team == "a":
             teamA[index] = id
-            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" if i.startswith("!") else name_list[i] for i in teamA]}]))
+            scoreboard_seats["a"] = ["" if i.startswith("!") else name_list[i] for i in teamA]
+            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": scoreboard_seats["a"]}]))
         elif team == "b":
             teamB[index] = id
-            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": ["" if i.startswith("!") else name_list[i] for i in teamB]}]))
+            scoreboard_seats["b"] = ["" if i.startswith("!") else name_list[i] for i in teamB]
+            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": scoreboard_seats["b"]}]))
         print(full_name_list[playerId] + " has been replaced by " + full_name_list[id] + ".")
-        sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + " -> " + name_list[id]]))
+        message_seq += 1
+        scoreboard_messages[team].append([message_seq, name_list[playerId] + " -> " + name_list[id]])
+        del scoreboard_messages[team][:-5]
+        sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps([team, scoreboard_messages[team]]))
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [index + 1, 400]]))
-    writeToDatabase()
     for i in range(lightnings):
-        writeToDatabase()
         full_name_list = {}
         name_list = {}
         all_users = []
@@ -651,7 +758,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             full_name_list[player["username"]] = BLUE + player["first_name"] + " " + player["last_name"][0] + "." + RESET
             name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
-        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}]))
+        scoreboard_seats = {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]))
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", i + 1, tossups, lightnings, "lightning"]))
         print(GREEN + "Lightning " + str(i + 1) + RESET + ":")
         while True:
@@ -729,9 +837,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         for dict in rows:
             if dict["username"] in teamA or dict["username"] in teamB:
                 queue_change([dict["username"], "lightning", [0, 0, 1], game_date_time, i + 1, "a" if dict["username"] in teamA else "b"])
-        writeToDatabase()
         if do_pass:
-            writeToDatabase()
             pass
         else:
             while True:
@@ -743,7 +849,10 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                     elif team == "b":
                         score["b"] += 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
-                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": +10"]))
+                    message_seq += 1
+                    scoreboard_messages[team].append([message_seq, name_list[playerId] + ": +10"])
+                    del scoreboard_messages[team][:-5]
+                    sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps([team, scoreboard_messages[team]]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 400]]))
                     queue_change([playerId, "lightning", [1, 0, 0], game_date_time, i + 1, "a" if playerId in teamA else "b"])
                 elif up_or_down == "-10" or up_or_down == "-" or up_or_down == "neg" or up_or_down == "i":
@@ -752,18 +861,25 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                     elif team == "b":
                         score["b"] -= 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
-                    sendMessage("SDMSG" + str(game_id_num) + "|" + json.dumps([team, name_list[playerId] + ": -10"]))
+                    message_seq += 1
+                    scoreboard_messages[team].append([message_seq, name_list[playerId] + ": -10"])
+                    del scoreboard_messages[team][:-5]
+                    sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps([team, scoreboard_messages[team]]))
                     sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [seat_num, 400]]))
                     queue_change([playerId, "lightning", [0, 1, 0], game_date_time, i + 1, "a" if playerId in teamA else "b"])
                 else:
                     print("That is not a valid input.")
                     continue
-                writeToDatabase()
                 break
-        writeToDatabase()
         if i < lightnings - 1:
             print("Score: " + BLUE + str(score["a"]) + " - " + str(score["b"]) + RESET)
             time.sleep(2)
+        for change in tentative_changes.copy():
+            with changes_lock:
+                change_id_counter += 1
+                changes_to_send.append({"id": change_id_counter, "data": change})
+            tentative_changes.remove(change)
+        writeToDatabase()
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
     print("Final Score: " + BLUE + str(score["a"]) + " - " + str(score["b"]) + RESET)
     time.sleep(2)
@@ -1246,17 +1362,9 @@ try:
                 print("That is not a valid input.")
 
     close()
-    try:
-        sendMessage("CLOSE" + str(game_id_num), repeat=1)
-    except:
-        pass
 except OSError:
     close()
-    try:
-        if sendMessage("CLOSE" + str(game_id_num), repeat=1) != "pass":
-            input(f"The connection to the server has failed.\nPress {GREEN}enter{RESET} to continue.")
-    except:
-        input(f"The connection to the server has failed.\nPress {GREEN}enter{RESET} to continue.")
+    input(f"The connection to the server has failed.\nPress {GREEN}enter{RESET} to continue.")
 """except Exception as e:
     close()
     try:

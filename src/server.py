@@ -302,7 +302,11 @@ while True:
                     if payload[0] == "NEW_PLAYERS":
                         for key, names in payload[1].items():
                             if key in ("a", "b"):
+                                previous_names = state["seats"][key].copy()
                                 state["seats"][key] = names
+                                for i in range(len(state["seats"][key])):
+                                    if state["seats"][key][i] not in previous_names and len(state["seats"][key][i]) != 0:
+                                        state["highlights"][key].append([i + 1, time.time() + 3])
                     elif payload[0] == "HIGHLIGHT":
                         team, h = payload[1], payload[2]
                         if (team in ("a", "b") and isinstance(h, list) and len(h) == 2
@@ -332,19 +336,19 @@ while True:
                 server_socket.sendto(b"pass", addr)
             else:
                 server_socket.sendto(b"error", addr)
-        elif code == "SDMSG":
+        elif code == "STMSG":
             parts = data.split("|", 1)
             item = game_list.get(parts[0]) if len(parts) >= 2 else None
             if item is not None:
                 try:
                     payload = json.loads(parts[1])
-                    team, line = payload[0], payload[1]
-                    if team in ("a", "b"):
+                    team, lines = payload[0], payload[1]
+                    if team in ("a", "b") and isinstance(lines, list):
                         st = item["scoreboard_state"]
-                        st["msg_seq"] += 1
-                        msgs = st["messages"][team]
-                        msgs.append([st["msg_seq"], line])
-                        del msgs[:-5]
+                        st["messages"][team] = [[int(entry[0]), str(entry[1])] for entry in lines][-5:]
+                        for entry in st["messages"][team]:
+                            if entry[0] > st["msg_seq"]:
+                                st["msg_seq"] = entry[0]
                 except Exception:
                     pass
                 bump_version(item)

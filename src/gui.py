@@ -103,28 +103,43 @@ class TextBox():
             if line.get("seq") is not None:
                 existing[line["seq"]] = line
         synced = []
+        incoming = []
         for entry in reversed(entries):
             seq, text = entry[0], entry[1]
+            incoming.append(seq)
             line = existing.get(seq)
             if line is None:
                 line = {
                     "seq": seq,
                     "full": str(text) if text is not None else "",
                     "visible": "",
-                    "progress": 0
+                    "progress": 0,
+                    "removing": False
                 }
+            else:
+                line["removing"] = False
             synced.append(line)
+        for index, line in enumerate(self.lines):
+            if line.get("seq") is not None and line["seq"] not in incoming and line["progress"] > 0:
+                line["removing"] = True
+                synced.insert(min(index, len(synced)), line)
         self.lines = synced[:5]
 
     def update(self):
         rendered_lines = []
         max_line_width = 0
 
+        self.lines = [line for line in self.lines if not (line.get("removing") and line["progress"] <= 0)]
+
         for i, line in enumerate(self.lines):
-            if i == 0 and line["progress"] < len(line["full"]):
+            if line.get("removing"):
+                line["progress"] -= self.type_speed
+                line["visible"] = line["full"][:max(line["progress"], 0)]
+            elif i == 0 and line["progress"] < len(line["full"]):
                 line["progress"] += self.type_speed
                 line["visible"] = line["full"][:line["progress"]]
             else:
+                line["progress"] = len(line["full"])
                 line["visible"] = line["full"]
 
             surf = self.font.render(line["visible"], True, self.text_color)
