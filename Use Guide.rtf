@@ -17,6 +17,43 @@
 \pard\pardeftab560\sa40\pardirnatural\partightenfactor0
 
 \f0\b\fs32 \cf0 Section 1:\
+
+\fs26 Setup of server.py and bot.py\
+
+\f1\b0 \
+Before launching the server, the file needs to be configured. The file defaults to localhost:9999, but that would need to be changed to something else to work over the internet.\
+I recommend using playit to help host the server, it avoids port forwarding and is free.\
+Download the playit launcher and follow its instructions to add the device to the user\'92s account.\
+Create a UDP tunnel on the device running the server and target an IP. The user can use any IPv4 address. It can be changed by editing client.py on lines 13 & 14.\
+\
+Launching server.py will create players.db. This is the database that the server is linked to.\
+\
+Before launching bot.py, the user needs to create a Discord bot to work with the file. This can be done through the Discord Developer Portal. This process is well documented other places, but all the user needs from that is the bot\'92s API key.\
+There are two options to provide the API key to bot.py:\
+	1. Create a file called .env inside of src, and writing KEY=[bot\'92s API key]\
+	2. Replace line 27 with BOT_TOKEN = \'93[bot\'92s API key]\'94\
+After adding the bot to a server, bot.py can be launched.\
+There are three commands - /stats, /score, and /games. Discord members can prompt the bot to get their data.\
+bot.py requires pdf.py to be placed in the same directory to function properly\
+
+\f0\b\fs32 \
+Section 2:\
+
+\fs26 Preparing config.ini\
+
+\f1\b0 \
+config.ini holds variables that the client and gui need to function properly.\
+It has the following format:\
+[CONNECTION]\
+ip = [user\'92s ip goes here]\
+port = [user\'92s port goes here]\
+[FORMAT]\
+use_rich_text = [true or false]\
+\
+ip and port are the IP and port of the server. use_rich_text is a boolean that tells the client whether to use ANSI color escape codes
+\f0\b\fs32 \
+\
+Section 3:\
 \pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
 
 \fs26 \cf0 Using client.py to record a game.\
@@ -57,6 +94,22 @@ Once the game begins it follows the format of all tossups, substitution, then al
 	- After the substitution option, the game moves into lightning rounds\
 		- The program asks for the username or seat ID like for tossups. It then asks \'93c\'94 or \'93i\'94 like bonuses. Only one player can buzz on lightnings.\
 		- No substitutions can be made during the lightning round.\
+	- Tossups can be corrected during the next tossup. The last played tossup can be reverted to, but not any previous tossups. If the user subs on a tossup and then immediately reverts to the preceding tossup, those subs are erased.\
+\
+
+\f0\b\fs32 Section 4:\
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\fs26 \cf0 Using gui.py in conjunction with client.py
+\fs32 \
+\pard\pardeftab560\slleading20\pardirnatural\partightenfactor0
+
+\f1\b0\fs26 \cf0 \
+gui.py is a scoreboard for client.py\
+The user can launch gui.py and enter the six-digit game code provided in client.py to connect to the game.\
+The scoreboard displays the score, seats, question number, and the current history of the game.\
+gui.py also requires config.ini\
+\
 \pard\pardeftab560\slleading20\partightenfactor0
 \cf0 \
 \

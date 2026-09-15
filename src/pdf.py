@@ -251,10 +251,11 @@ def _player_table(team, styles, width, seats = 1, team_name = None):
             f"<b>{names.get(p, p) if p.isalpha() else 'Combined Score'}</b><br/>",
             styles["base"])
         rows.append([name, str(point_distr["powers"] * 15 + point_distr["tens"] * 10 + point_distr["negs"] * -5),
+                     f"{((point_distr["powers"] * 15 + point_distr["tens"] * 10 + point_distr["negs"] * -5) / point_distr["tuh"]) * 20 if point_distr["tuh"] > 0 else 0:.1f}",
                      StackedBar(width * 0.4, 10, segs, dividers=True)])
     rows = sorted(rows, key = lambda x: int(x[1]), reverse = True)
-    rows.insert(0, ["PLAYER", "PTS", "TOSSUP OUTCOME DISTRIBUTION"])
-    cw = [0.22, 0.08, 0.45, 0.25]
+    rows.insert(0, ["PLAYER", "PTS", "PP20TUH", "TOSSUP OUTCOME DISTRIBUTION"])
+    cw = [0.20, 0.10, 0.10, 0.45]
     t = Table(rows, colWidths=[c * width for c in cw])
     t.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7),
@@ -262,10 +263,12 @@ def _player_table(team, styles, width, seats = 1, team_name = None):
         ("LINEBELOW", (0, 0), (-1, 0), 0.8, INK),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("ALIGN", (2, 0), (2, -1), "RIGHT"),
         ("TOPPADDING", (0, 0), (-1, -1), 6),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ("LINEBELOW", (0, 1), (-1, -2), 0.25, RULE),
         ("FONT", (1, 1), (1, -1), "Helvetica-Bold", 11),
+        ("FONT", (2, 1), (2, -1), "Helvetica-Bold", 11),
     ]))
     return t
 
@@ -694,10 +697,12 @@ def _category_slider_table(cats, styles, width):
                 StackedBar(width * 0.32, 10, segs), str(cats[c][3] if cats[c][3] != 0.1 else 0),
                 str(cats[c][0]) + "/" + str(cats[c][1]) + "/" + str(cats[c][2]),
                 str(cats[c][0] * 15 + cats[c][1] * 10 + cats[c][2] * -5),
+                f"{(((cats[c][0] * 15 + cats[c][1] * 10 + cats[c][2] * -5) / cats[c][3]) * 20 if cats[c][3] != 0.1 else 0):.1f}"
             ])
+            print(c + " " + str(cats[c][3]))
     rows.sort(key = lambda x: int(x[5]), reverse = True)
-    rows = [["CATEGORY", "P%", "ACCURACY", "TUH", "DISTRIBUTION", "PTS"]] + rows
-    cw = [0.22, 0.06, 0.36, 0.12, 0.12, 0.12]
+    rows = [["CATEGORY", "P%", "ACCURACY", "TUH", "DISTRIBUTION", "PTS", "PP20TUH"]] + rows
+    cw = [0.16, 0.10, 0.34, 0.10, 0.10, 0.10, 0.10]
     t = Table(rows, colWidths=[c * width for c in cw])
     t.setStyle(TableStyle([
         ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7),
@@ -709,11 +714,13 @@ def _category_slider_table(cats, styles, width):
         ("ALIGN", (3, 0), (3, -1), "CENTER"),
         ("ALIGN", (4, 0), (4, -1), "CENTER"),
         ("ALIGN", (5, 0), (5, -1), "CENTER"),
+        ("ALIGN", (6, 0), (6, -1), "CENTER"),
         ("FONT", (0, 1), (0, -1), "Helvetica-Bold", 9),
         ("FONT", (1, 1), (1, -1), "Helvetica-Bold", 9),
         ("FONT", (3, 1), (3, -1), "Helvetica-Bold", 9),
         ("FONT", (4, 1), (4, -1), "Helvetica-Bold", 9),
         ("FONT", (5, 1), (5, -1), "Helvetica-Bold", 9),
+        ("FONT", (6, 1), (6, -1), "Helvetica-Bold", 9),
         ("TOPPADDING", (0, 0), (-1, -1), 7),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
     ]))
@@ -952,6 +959,6 @@ def generate_player_report(player, games, out_path = None):
     return out_path if out_path else buf
 
 if __name__ == "__main__":
-    generate_match_report('Jun 28, 2026, 02:13:41.276115 PM', "match_report.pdf")
-    generate_player_report("ethanf", ["May 31, 2026, 04:29:56.047386 PM"], "player_report.pdf")
+    generate_match_report('Sep 14, 2026, 10:04:59.327471 AM', "match_report.pdf")
+    generate_player_report("ethanf", ["Sep 14, 2026, 10:04:59.327471 AM"], "player_report.pdf")
     print("OK")

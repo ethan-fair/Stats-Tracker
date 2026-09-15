@@ -5,3 +5,4 @@ Ethan Fair - 2026
    Server creates players.db file to save stats.
    The scoreboard connects via a code, which allows for multiple games and scoreboards connected to the server at once.
    The games played are saved in the database through a session name.
+

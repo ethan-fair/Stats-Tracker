@@ -10,7 +10,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-IP = "localhost" #"127.0.0.1"
+IP = "localhost"
 PORT = 9999
 server_socket.bind((IP, PORT))
 server_socket.settimeout(1)
@@ -25,20 +25,6 @@ last_cleared_date = None
 
 SCOREBOARD_FPS = 40
 
-def record_ack(game_id, req_id):
-    """Remember that a row is committed, so PLACK can tell the client to retire it.
-
-    Keyed by the client's game id rather than by the database row the stat landed
-    in: one client run numbers its changes in a single ascending sequence but can
-    write into several game rows -- a second game, or rows recovered from a
-    previous run -- and the client needs one answer that covers all of them.
-    """
-    item = game_list.get(str(game_id))
-    if item is None:
-        return
-    item["last_active"] = time.time()
-    item["acks"].add(req_id)
-
 
 def empty_scoreboard_state():
     return {
@@ -46,7 +32,7 @@ def empty_scoreboard_state():
         "messages": {"a": [], "b": []},
         "seats": {"a": [], "b": []},
         "highlights": {"a": [], "b": []},
-        "question": [0, 0, 0, "tossup"],   # [number, tossups, lightnings, phase]
+        "question": [0, 0, 0, "tossup"],
         "names": {"a": "Team A", "b": "Team B"},
         "version": 0,
         "msg_seq": 0,
@@ -399,7 +385,7 @@ while True:
                 "session_name": data,
                 "session_stats": {},
                 "scoreboard_state": empty_scoreboard_state(),
-                "acks": []
+                "all_games": {}
             }
             mark_active_game(num)
             server_socket.sendto(str(num).encode(), addr)
@@ -409,12 +395,15 @@ while True:
                 server_socket.sendto(b"nogame", addr)
                 continue
             item["last_active"] = time.time()
-            sent_list = []
-            for ack in sorted(item["acks"]):
-                if sent_list and ack == sent_list[-1][1] + 1:
-                    sent_list[-1][1] = ack
-                else:
-                    sent_list.append([ack, ack])
+            sent_list = {}
+            for i in item["all_games"].keys():
+                ack_list = []
+                for ack in sorted(item["all_games"][i]):
+                    if ack_list and ack == ack_list[-1][1] + 1:
+                        ack_list[-1][1] = ack
+                    else:
+                        ack_list.append([ack, ack])
+                sent_list[i] = ack_list
             server_socket.sendto(("ACKS|" + json.dumps(sent_list)).encode(), addr)
         elif code == "STGME":
             try:
@@ -618,7 +607,9 @@ while True:
                 if req_id in applied:
                     conn.close()
                     conn = None
-                    game_list[str(payload["game_id"])]["acks"] = applied
+                    tracked = game_list.get(str(payload.get("game_id")))
+                    if tracked is not None:
+                        tracked["all_games"][date_time] = applied
                     server_socket.sendto(b"pass", addr)
                     continue
 
@@ -661,8 +652,8 @@ while True:
                 if tracked is not None:
                     tracked["session_stats"] = {"player_data": arr["player_data"]}
                     mark_active_game(tracked["game_id"])
+                    tracked["all_games"][date_time] = applied
 
-                game_list[str(payload["game_id"])]["acks"] = applied
                 server_socket.sendto("pass".encode(), addr)
             except Exception:
                 if conn is not None:

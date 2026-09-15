@@ -118,8 +118,9 @@ def poll_server(sock):
                 data, addr = sock.recvfrom(65535)
                 msg = data.decode("utf-8")
                 if msg.startswith("ACKS|"):
+                    acks = json.loads(msg.split("|", 1)[1])
                     with changes_lock:
-                        changes_to_send[:] = [c for c in changes_to_send if not change_is_acked(int(c["id"]), json.loads(msg.split("|", 1)[1]))]
+                        changes_to_send[:] = [c for c in changes_to_send if not change_is_acked(int(c["id"]), acks.get(c["data"][3], []))]
         except socket.timeout:
             pass
         except Exception:
@@ -1365,12 +1366,12 @@ try:
 except OSError:
     close()
     input(f"The connection to the server has failed.\nPress {GREEN}enter{RESET} to continue.")
-"""except Exception as e:
+except Exception as e:
     close()
     try:
         sendMessage("CLOSE" + str(game_id_num), repeat=1)
     except:
         pass
-    input(f"An unexpected error occurred: {type(e).__name__}: {e}\nPress enter to continue.")"""
+    input(f"An unexpected error occurred: {type(e).__name__}: {e}\nPress enter to continue.")
 
 atexit.unregister(close)
