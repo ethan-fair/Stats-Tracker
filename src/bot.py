@@ -362,7 +362,6 @@ async def score_command(interaction: discord.Interaction, game: str):
     await interaction.response.defer(ephemeral=True)
 
     data = linked[game][0]
-    stats = linked[game][2].get("player_data", [])
     names = data.get("names") or {}
     team_a_name = names.get("a") or "Team A"
     team_b_name = names.get("b") or "Team B"
@@ -370,24 +369,11 @@ async def score_command(interaction: discord.Interaction, game: str):
     msg = "**Game**: " + game.split(" - ")[0] + "\n"
     msg += "**Questions**: \n"
     if data["question"][1] > 0:
-        msg += "*Tossups*: " + str(data["question"][0] if data["question"][0] < data["question"][1] else data["question"][1]) + "/" + str(data["question"][1]) + "\n"
+        msg += "*Tossups*: " + str(data["question"][1] if data["question"][3] == "lightning" else data["question"][0]) + "/" + str(data["question"][1]) + "\n"
     if data["question"][2] > 0:
-        msg += "*Lightnings*: " + str(data["question"][0] - data["question"][1] if data["question"][0] - data["question"][1] > 0 else 0) + "/" + str(data["question"][2]) + "\n"
+        msg += "*Lightnings*: " + str(data["question"][0] if data["question"][3] == "lightning" else 0) + "/" + str(data["question"][2]) + "\n"
     msg += "\n**Score**: \n"
     msg += team_a_name + ": " + str(data["score"]["a"]) + "\n" + team_b_name + ": " + str(data["score"]["b"]) + "\n\n"
-
-    fields = ["lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash"]
-    player_stats = {}
-    for i in stats:
-        if i["question_data"][0] not in player_stats.keys():
-            player_stats[i["question_data"][0]] = 0
-        if i["question_data"][1] == "lightning":
-            player_stats[i["question_data"][0]] += 10 * i["question_data"][2][0]
-            player_stats[i["question_data"][0]] -= 10 * i["question_data"][2][1]
-        elif i["question_data"][1] in fields:
-            player_stats[i["question_data"][0]] += 15 * i["question_data"][2][0]
-            player_stats[i["question_data"][0]] += 10 * i["question_data"][2][1]
-            player_stats[i["question_data"][0]] -= 5 * i["question_data"][2][2]
 
     msg += "**Players**: \n"
     for team_name, team_key in ((team_a_name, "a"), (team_b_name, "b")):
@@ -396,8 +382,8 @@ async def score_command(interaction: discord.Interaction, game: str):
         if not any(seats):
             msg += "\t*Players not named.*\n"
         else:
-            for i in seats:
-                msg += "\t[" + i + "], *Pts: " + str(player_stats.get(i, 0)) + "*\n"
+            for n, i in enumerate(seats):
+                msg += "\t[" + i + "], *Pts: " + str(data["score"].get("points", {}).get((data["score"].get("roster", {}).get(team_key) or [""] * len(seats))[n], 0)) + "*\n"
 
     await interaction.followup.send(
         msg,
@@ -471,7 +457,12 @@ def get_all_games() -> tuple[list[str], dict[str, str]]:
     return_games = {}
     for i in range(len(dates)):
         date = dates[i]
-        dates[i] = datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").strftime("%a %b %d, %I:%M %p, %Y") + " - " + games[dates[i]]["name"]
+        label = datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").strftime("%a %b %d, %I:%M %p, %Y") + " - " + games[date]["name"][:60]
+        dates[i] = label
+        n = 2
+        while dates[i] in return_games:
+            dates[i] = label + " (" + str(n) + ")"
+            n += 1
         return_games[dates[i]] = date
     #print(return_games)
     return dates, return_games

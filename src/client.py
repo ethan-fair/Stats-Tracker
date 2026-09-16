@@ -44,9 +44,14 @@ def close():
     with changes_lock:
         if changes_to_send:
             print("Some stats could not be sent to the server. They have been saved and will be sent the next time this client starts.")
+            saved = json.load(open("changes.json")) if os.path.exists("changes.json") else []
             with open("changes.json", "w") as f:
-                json.dump([{"id": c["id"], "data": c["data"]} for c in changes_to_send], f)
+                json.dump(saved + [{"id": c["id"], "data": c["data"]} for c in changes_to_send if {"id": c["id"], "data": c["data"]} not in saved], f)
             changes_to_send = []
+    if pending_players:
+        saved_players = json.load(open("players.json")) if os.path.exists("players.json") else []
+        with open("players.json", "w") as f:
+            json.dump(saved_players + [p for p in pending_players if p not in saved_players], f)
     try:
         sendMessage("CLOSE" + str(game_id_num), repeat=1)
     except:
@@ -137,7 +142,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
     global change_id_counter
     global changes_to_send
     global tentative_changes
-    score = {"a": 0, "b": 0}
+    score = {"a": 0, "b": 0, "points": {}, "roster": {"a": teamA, "b": teamB}}
     tossup = 0
     scoreboard_messages = {"a": [], "b": []}
     message_seq = 0
@@ -153,7 +158,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
     packet = "pass"
     if tossups > 0:
         while True:
-            packet = input(f"Enter {GREEN}packet name{RESET} for tossups (ex: {GREEN}IS #226A P1{RESET}) or pass: ").lower()
+            packet = input(f"Enter {GREEN}packet name{RESET} for tossups (ex: {GREEN}IS #226A P1{RESET}) or pass: ").lower().strip()
             if packet == "pass":
                 break
             packs_response = sendMessage("PACKS")
@@ -199,9 +204,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         teamBName = teamBName or "Team B"
     else:
         name = teamAName + " vs. " + teamBName
-    stgme_response = sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name, "a_name": teamAName, "b_name": teamBName}, game_id_num]), repeat=3)
-    if stgme_response != "pass":
-        print(RED + "Warning" + RESET + ": the server did not confirm that the game was registered. Stats will be kept locally and retried, but check the connection.")
+    while sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name, "a_name": teamAName, "b_name": teamBName}, game_id_num]), repeat=3) != "pass":
+        print(RED + "Warning" + RESET + ": the server did not confirm that the game was registered. Retrying, check the connection.")
     while tossup < tossups:
         full_name_list = {}
         name_list = {}
@@ -223,7 +227,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         if tossup not in tossup_seats.keys():
             tossup_seats[tossup] = {"a": scoreboard_seats["a"][:], "b": scoreboard_seats["b"][:]}
         if tossup not in tossup_scores.keys():
-            tossup_scores[tossup] = score.copy()
+            tossup_scores[tossup] = {**score, "points": score["points"].copy()}
         if tossup not in tossup_rosters.keys():
             tossup_rosters[tossup] = {"a": teamA[:], "b": teamB[:]}
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", tossup, tossups, lightnings, "tossup"]))
@@ -280,10 +284,12 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             previous_tossup = tossup - 1
             sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, tossups, lightnings, "tossup"]))
             scoreboard_seats = {"a": tossup_seats[previous_tossup]["a"][:], "b": tossup_seats[previous_tossup]["b"][:]}
+            if teamA != tossup_rosters[previous_tossup]["a"] or teamB != tossup_rosters[previous_tossup]["b"]:
+                print(RED + "Warning" + RESET + ": substitutions made at or after Tossup " + str(previous_tossup) + " were undone. Make them again if needed.")
             teamA[:] = tossup_rosters[previous_tossup]["a"]
             teamB[:] = tossup_rosters[previous_tossup]["b"]
             sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]))
-            score = tossup_scores[previous_tossup].copy()
+            score = {**tossup_scores[previous_tossup], "points": tossup_scores[previous_tossup]["points"].copy()}
             sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
             scoreboard_messages = {"a": [entry[:] for entry in tossup_messages[previous_tossup]["a"]], "b": [entry[:] for entry in tossup_messages[previous_tossup]["b"]]}
             sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps(["a", scoreboard_messages["a"]]))
@@ -383,7 +389,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                         if choice.lower() == "y":
                             first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                             last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
-                            ensure_player(id, first_name, last_name)
+                            if ensure_player(id, first_name, last_name) == "exists":
+                                continue
                             all_users.append(id)
                             full_name_list[id] = BLUE + first_name + " " + last_name[0] + "." + RESET
                             name_list[id] = first_name + " " + last_name[0] + "."
@@ -408,6 +415,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 scoreboard_messages[team].append([message_seq, name_list[playerId] + " -> " + name_list[id]])
                 del scoreboard_messages[team][:-5]
                 sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps([team, scoreboard_messages[team]]))
+                sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                 sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [index + 1, 400]]))
         else:
             team_a_answer = False
@@ -420,7 +428,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 for player in rows:
                     all_users.append(player["username"])
                     full_name_list[player["username"]] = BLUE + player["first_name"] + " " + player["last_name"][0] + "." + RESET
-                    name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
+                    name_list[player["username"]] = (teamAName if player["username"] == "!playerA" else teamBName) if player["username"].startswith("!") else player["first_name"] + " " + player["last_name"][0] + "."
                 playerId = ""
                 invalid_input = False
                 return_with_neg_error = False
@@ -516,6 +524,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 if finalType == 1:
                     queue_change([playerId, category, [1, 0, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] += 15
+                    score["points"][playerId] = score["points"].get(playerId, 0) + 15
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     message_seq += 1
                     scoreboard_messages[team].append([message_seq, name_list[playerId] + ": 15"])
@@ -525,6 +534,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 elif finalType == 2:
                     queue_change([playerId, category, [0, 1, 0, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] += 10
+                    score["points"][playerId] = score["points"].get(playerId, 0) + 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     message_seq += 1
                     scoreboard_messages[team].append([message_seq, name_list[playerId] + ": 10"])
@@ -534,6 +544,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 elif finalType == 3:
                     queue_change([playerId, category, [0, 0, 1, 0], game_date_time, tossup, "a" if playerId in teamA else "b"])
                     score[team] -= 5
+                    score["points"][playerId] = score["points"].get(playerId, 0) - 5
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     message_seq += 1
                     scoreboard_messages[team].append([message_seq, name_list[playerId] + ": -5"])
@@ -610,10 +621,12 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 previous_tossup = tossup
                 sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, tossups, lightnings, "tossup"]))
                 scoreboard_seats = {"a": tossup_seats[previous_tossup]["a"][:], "b": tossup_seats[previous_tossup]["b"][:]}
+                if teamA != tossup_rosters[previous_tossup]["a"] or teamB != tossup_rosters[previous_tossup]["b"]:
+                    print(RED + "Warning" + RESET + ": substitutions made at or after Tossup " + str(previous_tossup) + " were undone. Make them again if needed.")
                 teamA[:] = tossup_rosters[previous_tossup]["a"]
                 teamB[:] = tossup_rosters[previous_tossup]["b"]
                 sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]))
-                score = tossup_scores[previous_tossup].copy()
+                score = {**tossup_scores[previous_tossup], "points": tossup_scores[previous_tossup]["points"].copy()}
                 sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                 scoreboard_messages = {"a": [entry[:] for entry in tossup_messages[previous_tossup]["a"]], "b": [entry[:] for entry in tossup_messages[previous_tossup]["b"]]}
                 sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps(["a", scoreboard_messages["a"]]))
@@ -721,7 +734,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 if choice.lower() == "y":
                     first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                     last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
-                    ensure_player(id, first_name, last_name)
+                    if ensure_player(id, first_name, last_name) == "exists":
+                        continue
                     if team == "a":
                         teamA[index] = id
                     elif team == "b":
@@ -749,6 +763,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         scoreboard_messages[team].append([message_seq, name_list[playerId] + " -> " + name_list[id]])
         del scoreboard_messages[team][:-5]
         sendMessage("STMSG" + str(game_id_num) + "|" + json.dumps([team, scoreboard_messages[team]]))
+        sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [index + 1, 400]]))
     for i in range(lightnings):
         full_name_list = {}
@@ -770,7 +785,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             for player in rows:
                 all_users.append(player["username"])
                 full_name_list[player["username"]] = BLUE + player["first_name"] + " " + player["last_name"][0] + "." + RESET
-                name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
+                name_list[player["username"]] = (teamAName if player["username"] == "!playerA" else teamBName) if player["username"].startswith("!") else player["first_name"] + " " + player["last_name"][0] + "."
             playerId = ""
             invalid_input = False
             seat_num = 0
@@ -849,6 +864,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                         score["a"] += 10
                     elif team == "b":
                         score["b"] += 10
+                    score["points"][playerId] = score["points"].get(playerId, 0) + 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     message_seq += 1
                     scoreboard_messages[team].append([message_seq, name_list[playerId] + ": +10"])
@@ -861,6 +877,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                         score["a"] -= 10
                     elif team == "b":
                         score["b"] -= 10
+                    score["points"][playerId] = score["points"].get(playerId, 0) - 10
                     sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                     message_seq += 1
                     scoreboard_messages[team].append([message_seq, name_list[playerId] + ": -10"])
@@ -892,7 +909,10 @@ def flush_pending_players():
         return
     still_pending = []
     for player in pending_players:
-        if sendMessage("ADPLR" + json.dumps(player), repeat=2) != "pass":
+        reply = sendMessage("ADPLR" + json.dumps(player), repeat=2)
+        if reply.startswith("exists|"):
+            print(RED + "Warning" + RESET + ": the username " + player[0] + " already belongs to " + reply[7:] + ", so the stats entered for " + player[1] + " " + player[2] + " are recorded under that player.")
+        elif reply != "pass":
             still_pending.append(player)
     pending_players = still_pending
 
@@ -905,8 +925,12 @@ def ensure_player(username, first_name, last_name):
     being sent once and forgotten.
     """
     player = [username, first_name, last_name]
-    if sendMessage("ADPLR" + json.dumps(player), repeat=3) == "pass":
+    reply = sendMessage("ADPLR" + json.dumps(player), repeat=3)
+    if reply == "pass":
         return True
+    if reply.startswith("exists|"):
+        print(RED + "Warning" + RESET + ": the username " + username + " already belongs to " + reply[7:] + ". Enter a different username, or restart the client to select that player.")
+        return "exists"
     pending_players.append(player)
     print(RED + "Warning" + RESET + ": the server did not confirm that " + first_name + " " + last_name + " was added. This will keep retrying.")
     return False
@@ -1132,6 +1156,11 @@ try:
             poll_socket.settimeout(0.5)
             threading.Thread(target=poll_server, args=(poll_socket,), daemon=True).start()
 
+    if scriptRunning and os.path.exists("players.json"):
+        pending_players = json.load(open("players.json"))
+        flush_pending_players()
+        if not pending_players:
+            os.remove("players.json")
     if scriptRunning and os.path.exists("changes.json"):
         with open("changes.json") as f:
             loaded = json.load(f)
@@ -1246,7 +1275,8 @@ try:
                                 if choice.lower() == "y":
                                     first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                                     last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
-                                    ensure_player(id, first_name, last_name)
+                                    if ensure_player(id, first_name, last_name) == "exists":
+                                        continue
                                     teamA[i] = id
                                     name_rows.append({"username": id, "first_name": first_name, "last_name": last_name})
                                     break
@@ -1281,7 +1311,8 @@ try:
                                 if choice.lower() == "y":
                                     first_name = prompt_name(f"Enter the player's {GREEN}first name{RESET}: ")
                                     last_name = prompt_name(f"Enter the player's {GREEN}last name{RESET}: ")
-                                    ensure_player(id, first_name, last_name)
+                                    if ensure_player(id, first_name, last_name) == "exists":
+                                        continue
                                     teamB[i] = id
                                     name_rows.append({"username": id, "first_name": first_name, "last_name": last_name})
                                     break

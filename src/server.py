@@ -361,17 +361,17 @@ while True:
                 c.execute("""
                 INSERT INTO players (username, first_name, last_name)
                 VALUES (?, ?, ?)
-                ON CONFLICT(username) DO UPDATE SET
-                    first_name=excluded.first_name,
-                    last_name=excluded.last_name
+                ON CONFLICT(username) DO NOTHING
                 """, (
                     data[0],
                     data[1],
                     data[2]
                 ))
+                c.execute("SELECT first_name, last_name FROM players WHERE username = ?", (data[0],))
+                existing = c.fetchone()
                 conn.commit()
                 conn.close()
-                server_socket.sendto(b"pass", addr)
+                server_socket.sendto(b"pass" if list(existing) == [data[1], data[2]] else ("exists|" + existing[0] + " " + existing[1]).encode(), addr)
             except Exception:
                 server_socket.sendto(b"error", addr)
 
@@ -416,6 +416,7 @@ while True:
                 if len(data) > 2:
                     named = game_list.get(str(data[2]))
                     if named is not None:
+                        named["date"] = data[0]
                         named["scoreboard_state"]["names"]["a"] = data[1].get("a_name") or "Team A"
                         named["scoreboard_state"]["names"]["b"] = data[1].get("b_name") or "Team B"
                         bump_version(named)
@@ -428,16 +429,10 @@ while True:
                         data TEXT NOT NULL
                     )
                 """)
-                while True:
-                    c.execute("SELECT 1 FROM games WHERE date = ?", (data[0],))
-                    if c.fetchone() is None:
-                        break
-                    data[0] = datetime.datetime.fromtimestamp(datetime.datetime.strptime(data[0], "%b %d, %Y, %I:%M:%S.%f %p").timestamp() + 0.000001).strftime("%b %d, %Y, %I:%M:%S.%f %p")
                 c.execute("""
                 INSERT INTO games (date, data)
                 VALUES (?, ?)
-                ON CONFLICT(date) DO UPDATE SET
-                    data=excluded.data
+                ON CONFLICT(date) DO NOTHING
                 """, (
                     data[0],
                     json.dumps(data[1])
@@ -603,6 +598,8 @@ while True:
 
                 arr = json.loads(row["data"])
                 applied = arr.setdefault("applied_ids", [])
+                if payload.get("game_id") is not None and str(payload["game_id"]) not in game_list:
+                    game_list[str(payload["game_id"])] = {"game_id": str(payload["game_id"]), "last_active": time.time(), "session_name": "", "session_stats": {}, "scoreboard_state": empty_scoreboard_state(), "all_games": {}, "date": date_time}
 
                 if req_id in applied:
                     conn.close()
@@ -649,9 +646,10 @@ while True:
                     if user in name_rows:
                         arr["player_data"][i]["question_data"][0] = name_rows[user]
                 tracked = game_list.get(str(payload.get("game_id")))
-                if tracked is not None:
+                if tracked is not None and tracked.get("date") == date_time:
                     tracked["session_stats"] = {"player_data": arr["player_data"]}
                     mark_active_game(tracked["game_id"])
+                if tracked is not None:
                     tracked["all_games"][date_time] = applied
 
                 server_socket.sendto("pass".encode(), addr)

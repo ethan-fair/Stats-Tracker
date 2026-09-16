@@ -348,11 +348,11 @@ def _team_block_lightning(team, styles, width, seats = 1):
 
 # ---------- bonus conversion (match report) ----------
 def _bonus_table(bonus_data, team_a, team_b, styles, width):
-    """Bonus conversion line for both teams: answered / heard / conversion / PP3BH.
+    """Bonus conversion line for both teams: answered / heard / conversion / PPB.
 
     bonus_data: {"a": [answered, heard], "b": [answered, heard]}
     """
-    rows = [["TEAM", "ANSWERED", "HEARD", "CONVERSION", "PP3BH", "RATE"]]
+    rows = [["TEAM", "ANSWERED", "HEARD", "CONVERSION", "PPB", "RATE"]]
     for team, label in (("a", team_a), ("b", team_b)):
         ans, heard = bonus_data[team][0], bonus_data[team][1]
         conv = ans / heard * 100 if heard > 0 else 0
@@ -926,7 +926,7 @@ def generate_player_report(player, games, out_path = None):
         _stat_tile("ANSWERED", str(master_data_list["bonus_ans"]), styles, W / 4),
         _stat_tile("HEARD", str(master_data_list["bonus_heard"]), styles, W / 4),
         _stat_tile("CONVERSION", f"{master_data_list['bonus_ans'] / master_data_list['bonus_heard'] * 100 if master_data_list['bonus_heard'] > 0 else 0:.1f}" + "%", styles, W / 4),
-        _stat_tile("PP3BH", f"{master_data_list['bonus_ans'] / master_data_list['bonus_heard'] * 30 if master_data_list['bonus_heard'] > 0 else 0:.1f}", styles, W / 4)
+        _stat_tile("PPB", f"{master_data_list['bonus_ans'] / master_data_list['bonus_heard'] * 30 if master_data_list['bonus_heard'] > 0 else 0:.1f}", styles, W / 4)
     ]
     tile_row = Table([tiles], colWidths=[W / 4] * 4)
     tile_row.setStyle(TableStyle([
