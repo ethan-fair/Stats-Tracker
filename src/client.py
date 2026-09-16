@@ -188,7 +188,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             if declined:
                 continue
             if not flag:
-                packet_name = input(f"Packet is not identified in the database.\nEnter a name for the packet (ex: {GREEN}Invitational Series #226A Packet 1{RESET}) or pass: ").strip()
+                packet_name = input(f"Packet is not identified in the database.\nEnter a name for the packet (ex: {GREEN}Inv. Series #226A Packet 1{RESET}) or pass: ").strip()
                 if packet_name.lower() == "pass":
                     continue
                 sendMessage("ADPAC" + json.dumps([packet, packet_name, datetime.date.today().strftime("%m/%d/%Y")]))
