@@ -57,8 +57,6 @@ while running:
         if client_socket:
             client_socket.close()
 if running:
-    poll_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    poll_socket.settimeout(0.5)
     state_version = -1
     POLL_INTERVAL = 0.1
 else:
@@ -318,14 +316,9 @@ class QuestionWheel():
         self.screen = screen
         self.x = x
         self.y = y
-        # The wheel runs over one continuous sequence of positions: 1..tossups
-        # are the tossups, then the lightnings follow straight on, so the last
-        # tossup's lower neighbour is the first lightning. What each position
-        # prints, and its colour, comes from which phase it lands in.
         self.position = 0        # 0 until the first question arrives
         self.prev_position = 0
-        self.tossups = 0
-        self.lightnings = 0
+        self.phase = "tossup"
         self.display = 0.0       # animated wheel position, in whole positions
         self.anim_progress = 1.0
         self.anim_speed = 0.09
@@ -359,45 +352,37 @@ class QuestionWheel():
             best = (font, font.render("88", True, (255, 255, 255)).get_bounding_rect().height)
         return best
 
-    def set_number(self, n, tossups=0, lightnings=0, phase=None):
+    def set_number(self, n, phase=None):
         try:
             n = int(n)
-            tossups = int(tossups)
-            lightnings = int(lightnings)
         except (TypeError, ValueError):
             return
         if n < 1:
             return
-        if tossups or lightnings:
-            self.tossups, self.lightnings = tossups, lightnings
-        # Lightning numbering restarts at 1, so it sits after the tossups on
-        # the wheel. Moving from the last tossup to the first lightning is then
-        # an ordinary one-step roll rather than a jump back to the start.
-        position = self.tossups + n if phase == "lightning" else n
-        if self.position < 1:
+        if phase not in ("tossup", "lightning"):
+            phase = self.phase
+        if self.position < 1 or phase != self.phase:
             # First question: settle straight onto it rather than rolling up
             # from a position the wheel never shows.
-            self.position = self.prev_position = position
-            self.display = float(position)
+            self.phase = phase
+            self.position = self.prev_position = n
+            self.display = float(n)
             self.anim_progress = 1.0
             return
-        if position == self.position:
+        if n == self.position:
             return
         self.prev_position = self.position
-        self.position = position
+        self.position = n
         self.anim_progress = 0.0
 
     def label_for(self, k):
         """A wheel position's printed number and colour, by the phase it's in."""
-        if k <= self.tossups:
-            return str(k), self.TOSSUP_COLOUR
-        return str(k - self.tossups), self.LIGHTNING_COLOUR
+        return str(k), self.LIGHTNING_COLOUR if self.phase == "lightning" else self.TOSSUP_COLOUR
 
     def reset(self):
         self.position = 0
         self.prev_position = 0
-        self.tossups = 0
-        self.lightnings = 0
+        self.phase = "tossup"
         self.display = 0.0
         self.anim_progress = 1.0
         self.current_width = self.base_width
@@ -429,12 +414,9 @@ class QuestionWheel():
 
         centre_y = self.height // 2
         first = int(self.display) - 1
-        last = self.tossups + self.lightnings
         for k in range(first, first + 4):
             if k < 1:
                 continue         # the wheel starts at the first question
-            if last and k > last:
-                continue         # and stops at the last one of the game
             dy = (k - self.display) * self.slot
             if abs(dy) > self.slot * 1.6:
                 continue
@@ -505,12 +487,15 @@ class SeatTracker():
         self.screen.blit(surface, rect)
 
 
-def poll_server(sock):
+def poll_server():
     global state_version
     while running:
         try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(0.5)
             sock.sendto(("UPDTE" + session + "|" + str(state_version)).encode(), (IP, PORT))
             data, addr = sock.recvfrom(4096)
+            sock.close()
             msg = data.decode("utf-8")
             if msg.startswith("SNAP|"):
                 payload = json.loads(msg.split("|", 1)[1])
@@ -525,7 +510,7 @@ def poll_server(sock):
             print(e)
         time.sleep(POLL_INTERVAL)
 
-threading.Thread(target=poll_server, args=(poll_socket,), daemon=True).start()
+threading.Thread(target=poll_server, daemon=True).start()
 
 pygame.init()
 game_width = 1280
@@ -569,7 +554,7 @@ while running:
             teamBText.sync_lines(msg["messages"]["b"])
             q = msg["question"]
             if q and q[0]:
-                questionWheel.set_number(q[0], q[1], q[2], q[3])
+                questionWheel.set_number(q[0], q[1])
             else:
                 questionWheel.reset()
         except Exception:

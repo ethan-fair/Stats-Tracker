@@ -368,10 +368,8 @@ async def score_command(interaction: discord.Interaction, game: str):
 
     msg = "**Game**: " + game.split(" - ")[0] + "\n"
     msg += "**Questions**: \n"
-    if data["question"][1] > 0:
-        msg += "*Tossups*: " + str(data["question"][1] if data["question"][3] == "lightning" else data["question"][0]) + "/" + str(data["question"][1]) + "\n"
-    if data["question"][2] > 0:
-        msg += "*Lightnings*: " + str(data["question"][0] if data["question"][3] == "lightning" else 0) + "/" + str(data["question"][2]) + "\n"
+    if data["question"][0] > 0:
+        msg += ("*Lightnings*: " if data["question"][1] == "lightning" else "*Tossups*: ") + str(data["question"][0]) + "\n"
     msg += "\n**Score**: \n"
     msg += team_a_name + ": " + str(data["score"]["a"]) + "\n" + team_b_name + ": " + str(data["score"]["b"]) + "\n\n"
 

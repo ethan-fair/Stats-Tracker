@@ -26,6 +26,9 @@ send_socket = None
 ACK_POLL_INTERVAL = 0.25
 ACK_DRAIN_TIMEOUT = 10.0
 ACK_SILENT_POLLS = 6
+ACK_BATCH_SIZE = 128
+ACK_SEND_INTERVAL = 0.005
+ACK_RESEND_INTERVAL = 1.0
 
 def queue_change(data):
     tentative_changes.append(data)
@@ -115,12 +118,15 @@ def change_is_acked(change_id, ranges):
             return True
     return False
 
-def poll_server(sock):
+def poll_server():
     while True:
         try:
             if game_id_num is not None:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(0.5)
                 sock.sendto(("PLACK" + str(game_id_num)).encode(), (IP, PORT))
                 data, addr = sock.recvfrom(65535)
+                sock.close()
                 msg = data.decode("utf-8")
                 if msg.startswith("ACKS|"):
                     acks = json.loads(msg.split("|", 1)[1])
@@ -230,7 +236,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             tossup_scores[tossup] = {**score, "points": score["points"].copy()}
         if tossup not in tossup_rosters.keys():
             tossup_rosters[tossup] = {"a": teamA[:], "b": teamB[:]}
-        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", tossup, tossups, lightnings, "tossup"]))
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", tossup, "tossup"]))
         category = ""
         while True:
             print(GREEN + "Tossup " + str(tossup) + RESET + ": ")
@@ -282,7 +288,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 continue
         if category == "correction":
             previous_tossup = tossup - 1
-            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, tossups, lightnings, "tossup"]))
+            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, "tossup"]))
             scoreboard_seats = {"a": tossup_seats[previous_tossup]["a"][:], "b": tossup_seats[previous_tossup]["b"][:]}
             if teamA != tossup_rosters[previous_tossup]["a"] or teamB != tossup_rosters[previous_tossup]["b"]:
                 print(RED + "Warning" + RESET + ": substitutions made at or after Tossup " + str(previous_tossup) + " were undone. Make them again if needed.")
@@ -619,7 +625,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         if tossup == tossups:
             if input(f"{GREEN}Correct{RESET} Tossup " + str(tossup) + " (y or n): ").strip().lower() == "y":
                 previous_tossup = tossup
-                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, tossups, lightnings, "tossup"]))
+                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, "tossup"]))
                 scoreboard_seats = {"a": tossup_seats[previous_tossup]["a"][:], "b": tossup_seats[previous_tossup]["b"][:]}
                 if teamA != tossup_rosters[previous_tossup]["a"] or teamB != tossup_rosters[previous_tossup]["b"]:
                     print(RED + "Warning" + RESET + ": substitutions made at or after Tossup " + str(previous_tossup) + " were undone. Make them again if needed.")
@@ -776,7 +782,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
         scoreboard_seats = {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]))
-        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", i + 1, tossups, lightnings, "lightning"]))
+        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", i + 1, "lightning"]))
         print(GREEN + "Lightning " + str(i + 1) + RESET + ":")
         while True:
             full_name_list = {}
@@ -900,7 +906,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         writeToDatabase()
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
     print("Final Score: " + BLUE + str(score["a"]) + " - " + str(score["b"]) + RESET)
-    time.sleep(2)
+    flush_changes()
 
 def flush_pending_players():
     """Re-send player registrations the server never confirmed."""
@@ -917,13 +923,6 @@ def flush_pending_players():
     pending_players = still_pending
 
 def ensure_player(username, first_name, last_name):
-    """Register a player on the server, retrying until the add is confirmed.
-
-    An unconfirmed add leaves stats recorded under a username that has no row
-    in the players table, which permanently breaks every later report for that
-    game, so an unacknowledged add is retried from writeToDatabase() instead of
-    being sent once and forgotten.
-    """
     player = [username, first_name, last_name]
     reply = sendMessage("ADPLR" + json.dumps(player), repeat=3)
     if reply == "pass":
@@ -935,24 +934,12 @@ def ensure_player(username, first_name, last_name):
     print(RED + "Warning" + RESET + ": the server did not confirm that " + first_name + " " + last_name + " was added. This will keep retrying.")
     return False
 
-def wrrow_packet(change):
-    return ("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num})).encode()
-
-
 def remove_change(change_id):
     with changes_lock:
         for i in range(len(changes_to_send)):
             if changes_to_send[i]["id"] == change_id:
                 del changes_to_send[i]
                 return
-
-
-def get_send_socket():
-    global send_socket
-    if send_socket is None:
-        send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        send_socket.setblocking(False)
-    return send_socket
 
 
 def drain_replies(sock):
@@ -969,21 +956,18 @@ def send_changes_synchronously():
     with changes_lock:
         pending = list(changes_to_send)
     for change in pending:
-        reply = sendMessage("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num}), repeat=1)
-        if reply == "pass":
-            remove_change(change["id"])
-        elif reply == "TIMEOUT" or reply == "SVRCLS":
-            break
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.sendto(("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num})).encode(), (IP, PORT))
+        except OSError:
+            pass
+        sock.close()
+        time.sleep(ACK_SEND_INTERVAL)
     with changes_lock:
         return not changes_to_send
 
 
 def flush_changes(timeout=ACK_DRAIN_TIMEOUT):
-    """Block until every queued change is acknowledged, or until timeout.
-
-    Gives up as soon as the queue stops shrinking, so quitting against a server
-    that is already gone costs a couple of seconds instead of the whole timeout.
-    """
     deadline = time.time() + timeout
     remaining = None
     stalled = 0
@@ -1002,21 +986,36 @@ def flush_changes(timeout=ACK_DRAIN_TIMEOUT):
 
 
 def writeToDatabase():
-    # Players first: a stat is useless if the player it belongs to was never saved.
     flush_pending_players()
+    now = time.time()
     with changes_lock:
-        batch = [("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num})).encode() for change in changes_to_send]
+        batch = []
+        for change in changes_to_send:
+            if now - change.get("sent", 0) < ACK_RESEND_INTERVAL:
+                continue
+            change["sent"] = now
+            batch.append(("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num})).encode())
+            if len(batch) >= ACK_BATCH_SIZE:
+                break
     if not batch:
         return
     with send_io_lock:
-        sock = get_send_socket()
         for packet in batch:
+            sock = None
             try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setblocking(False)
                 sock.sendto(packet, (IP, PORT))
+                sock.close()
             except BlockingIOError:
+                if sock is not None:
+                    sock.close()
                 break
             except OSError:
+                if sock is not None:
+                    sock.close()
                 break
+            time.sleep(ACK_SEND_INTERVAL)
         while True:
             try:
                 sock.recvfrom(4096)
@@ -1024,6 +1023,15 @@ def writeToDatabase():
                 break
             except OSError:
                 break
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(2)
+            sock.sendto(("COMIT" + str(game_id_num)).encode(), (IP, PORT))
+            sock.recvfrom(4096)
+            sock.close()
+        except:
+            pass
+        
 
 def sendMessage(message: str, repeat = 3, timeout = 2.0):
     for i in range(repeat):
@@ -1152,9 +1160,7 @@ try:
                         pass
             threading.Thread(target=keepalive_loop, daemon=True).start()
 
-            poll_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            poll_socket.settimeout(0.5)
-            threading.Thread(target=poll_server, args=(poll_socket,), daemon=True).start()
+            threading.Thread(target=poll_server, daemon=True).start()
 
     if scriptRunning and os.path.exists("players.json"):
         pending_players = json.load(open("players.json"))
@@ -1227,6 +1233,9 @@ try:
                         players = int(players)
                         if players <= 0:
                             print("That is not a valid number of players.")
+                            continue
+                        elif players > 9:
+                            print("A maximum of 9 players may be selected.")
                             continue
                         break
                     except:
@@ -1396,7 +1405,9 @@ try:
     close()
 except OSError:
     close()
+    import traceback
     input(f"The connection to the server has failed.\nPress {GREEN}enter{RESET} to continue.")
+    traceback.print_exc()
 except Exception as e:
     close()
     try:
