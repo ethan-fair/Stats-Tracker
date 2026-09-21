@@ -963,6 +963,17 @@ def send_changes_synchronously():
             pass
         sock.close()
         time.sleep(ACK_SEND_INTERVAL)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.sendto(("COMIT" + str(game_id_num)).encode(), (IP, PORT))
+    except OSError:
+        pass
+    sock.close()
+    for _ in range(ACK_SILENT_POLLS):
+        with changes_lock:
+            if not changes_to_send:
+                break
+        time.sleep(ACK_POLL_INTERVAL)
     with changes_lock:
         return not changes_to_send
 
@@ -997,9 +1008,10 @@ def writeToDatabase():
             batch.append(("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num})).encode())
             if len(batch) >= ACK_BATCH_SIZE:
                 break
-    if not batch:
+    if not batch and not changes_to_send:
         return
     with send_io_lock:
+        sock = None
         for packet in batch:
             sock = None
             try:
@@ -1016,7 +1028,7 @@ def writeToDatabase():
                     sock.close()
                 break
             time.sleep(ACK_SEND_INTERVAL)
-        while True:
+        while sock is not None:
             try:
                 sock.recvfrom(4096)
             except (BlockingIOError, socket.timeout):
