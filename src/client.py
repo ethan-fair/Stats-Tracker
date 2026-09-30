@@ -46,21 +46,27 @@ def close():
         flush_changes()
     with changes_lock:
         if changes_to_send:
-            print("Some stats could not be sent to the server. They have been saved and will be sent the next time this client starts.")
             saved = json.load(open("changes.json")) if os.path.exists("changes.json") else []
-            with open("changes.json", "w") as f:
+            with open("changes.json.tmp", "w") as f:
                 json.dump(saved + [{"id": c["id"], "data": c["data"]} for c in changes_to_send if {"id": c["id"], "data": c["data"]} not in saved], f)
+            os.replace("changes.json.tmp", "changes.json")
             changes_to_send = []
+            try:
+                print("Some stats could not be sent to the server. They have been saved and will be sent the next time this client starts.")
+            except OSError:
+                pass
     if pending_players:
         saved_players = json.load(open("players.json")) if os.path.exists("players.json") else []
         with open("players.json", "w") as f:
             json.dump(saved_players + [p for p in pending_players if p not in saved_players], f)
     try:
         sendMessage("CLOSE" + str(game_id_num), repeat=1)
-    except:
+    except OSError:
         pass
 
 def handle_exit_signals(signum, frame):
+    for exit_signal in [getattr(signal, name) for name in ("SIGHUP", "SIGTERM", "SIGINT") if hasattr(signal, name)]:
+        signal.signal(exit_signal, signal.SIG_IGN)
     sys.exit(0)
 
 atexit.register(close)
@@ -222,11 +228,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
         scoreboard_seats = {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}
-        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]))
-        to_highlight = []
-        for num, i in enumerate(teamA):
-            if not i.startswith("!"):
-                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", "a", [num + 1, ]]))
+        threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]),), daemon=True).start()
         tossup += 1
         if tossup not in tossup_messages.keys():
             tossup_messages[tossup] = {"a": [entry[:] for entry in scoreboard_messages["a"]], "b": [entry[:] for entry in scoreboard_messages["b"]]}
@@ -236,7 +238,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             tossup_scores[tossup] = {**score, "points": score["points"].copy()}
         if tossup not in tossup_rosters.keys():
             tossup_rosters[tossup] = {"a": teamA[:], "b": teamB[:]}
-        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", tossup, "tossup"]))
+        threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", tossup, "tossup"]),), daemon=True).start()
         category = ""
         while True:
             print(GREEN + "Tossup " + str(tossup) + RESET + ": ")
@@ -288,13 +290,13 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 continue
         if category == "correction":
             previous_tossup = tossup - 1
-            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, "tossup"]))
+            threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, "tossup"]),), daemon=True).start()
             scoreboard_seats = {"a": tossup_seats[previous_tossup]["a"][:], "b": tossup_seats[previous_tossup]["b"][:]}
             if teamA != tossup_rosters[previous_tossup]["a"] or teamB != tossup_rosters[previous_tossup]["b"]:
                 print(RED + "Warning" + RESET + ": substitutions made at or after Tossup " + str(previous_tossup) + " were undone. Make them again if needed.")
             teamA[:] = tossup_rosters[previous_tossup]["a"]
             teamB[:] = tossup_rosters[previous_tossup]["b"]
-            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]))
+            threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]),), daemon=True).start()
             score = {**tossup_scores[previous_tossup], "points": tossup_scores[previous_tossup]["points"].copy()}
             sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
             scoreboard_messages = {"a": [entry[:] for entry in tossup_messages[previous_tossup]["a"]], "b": [entry[:] for entry in tossup_messages[previous_tossup]["b"]]}
@@ -411,11 +413,11 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 if team == "a":
                     teamA[index] = id
                     scoreboard_seats["a"] = ["" if i.startswith("!") else name_list[i] for i in teamA]
-                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": scoreboard_seats["a"]}]))
+                    threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": scoreboard_seats["a"]}]),), daemon=True).start()
                 elif team == "b":
                     teamB[index] = id
                     scoreboard_seats["b"] = ["" if i.startswith("!") else name_list[i] for i in teamB]
-                    sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": scoreboard_seats["b"]}]))
+                    threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": scoreboard_seats["b"]}]),), daemon=True).start()
                 print(full_name_list[playerId] + " has been replaced by " + full_name_list[id] + ".")
                 message_seq += 1
                 scoreboard_messages[team].append([message_seq, name_list[playerId] + " -> " + name_list[id]])
@@ -618,20 +620,20 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                         changes_to_send.append({"id": change_id_counter, "data": change})
                     tentative_changes.remove(change)
             
-            writeToDatabase()
+            threading.Thread(target=writeToDatabase, daemon=True).start()
             sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
             do_revert = True
 
         if tossup == tossups:
             if input(f"{GREEN}Correct{RESET} Tossup " + str(tossup) + " (y or n): ").strip().lower() == "y":
                 previous_tossup = tossup
-                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, "tossup"]))
+                threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", previous_tossup, "tossup"]),), daemon=True).start()
                 scoreboard_seats = {"a": tossup_seats[previous_tossup]["a"][:], "b": tossup_seats[previous_tossup]["b"][:]}
                 if teamA != tossup_rosters[previous_tossup]["a"] or teamB != tossup_rosters[previous_tossup]["b"]:
                     print(RED + "Warning" + RESET + ": substitutions made at or after Tossup " + str(previous_tossup) + " were undone. Make them again if needed.")
                 teamA[:] = tossup_rosters[previous_tossup]["a"]
                 teamB[:] = tossup_rosters[previous_tossup]["b"]
-                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]))
+                threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]),), daemon=True).start()
                 score = {**tossup_scores[previous_tossup], "points": tossup_scores[previous_tossup]["points"].copy()}
                 sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
                 scoreboard_messages = {"a": [entry[:] for entry in tossup_messages[previous_tossup]["a"]], "b": [entry[:] for entry in tossup_messages[previous_tossup]["b"]]}
@@ -651,7 +653,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             change_id_counter += 1
             changes_to_send.append({"id": change_id_counter, "data": change})
         tentative_changes.remove(change)
-    writeToDatabase()
+    threading.Thread(target=writeToDatabase, daemon=True).start()
     while True:
         if lightnings == 0 or tossups == 0:
             break
@@ -759,11 +761,11 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         if team == "a":
             teamA[index] = id
             scoreboard_seats["a"] = ["" if i.startswith("!") else name_list[i] for i in teamA]
-            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": scoreboard_seats["a"]}]))
+            threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": scoreboard_seats["a"]}]),), daemon=True).start()
         elif team == "b":
             teamB[index] = id
             scoreboard_seats["b"] = ["" if i.startswith("!") else name_list[i] for i in teamB]
-            sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": scoreboard_seats["b"]}]))
+            threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"b": scoreboard_seats["b"]}]),), daemon=True).start()
         print(full_name_list[playerId] + " has been replaced by " + full_name_list[id] + ".")
         message_seq += 1
         scoreboard_messages[team].append([message_seq, name_list[playerId] + " -> " + name_list[id]])
@@ -781,8 +783,8 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
         scoreboard_seats = {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}
-        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]))
-        sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", i + 1, "lightning"]))
+        threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]),), daemon=True).start()
+        threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["QUESTION", i + 1, "lightning"]),), daemon=True).start()
         print(GREEN + "Lightning " + str(i + 1) + RESET + ":")
         while True:
             full_name_list = {}
@@ -903,7 +905,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 change_id_counter += 1
                 changes_to_send.append({"id": change_id_counter, "data": change})
             tentative_changes.remove(change)
-        writeToDatabase()
+        threading.Thread(target=writeToDatabase, daemon=True).start()
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
     print("Final Score: " + BLUE + str(score["a"]) + " - " + str(score["b"]) + RESET)
     flush_changes()
@@ -1041,7 +1043,7 @@ def writeToDatabase():
             sock.sendto(("COMIT" + str(game_id_num)).encode(), (IP, PORT))
             sock.recvfrom(4096)
             sock.close()
-        except:
+        except OSError:
             pass
         
 
@@ -1355,7 +1357,7 @@ try:
                     name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
                 
                 writeToDatabase()
-                sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" for i in range(len(teamA))] if team_a_individual != "y" else [name_list[i] for i in teamA], "b": ["" for i in range(len(teamB))] if team_b_individual != "y" else [name_list[i] for i in teamB]}]))
+                threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", {"a": ["" for i in range(len(teamA))] if team_a_individual != "y" else [name_list[i] for i in teamA], "b": ["" for i in range(len(teamB))] if team_b_individual != "y" else [name_list[i] for i in teamB]}]),), daemon=True).start()
                 questionTracker(name_rows, tossups, lightnings, teamA, teamB, teamAName = teamAName, teamBName = teamBName)
                 input(f"Press {GREEN}enter{RESET} to continue.")
                 break
@@ -1382,7 +1384,8 @@ try:
                     times_round_trip = []
                     dropped_packets = 0
                     print("Test started, takes at least 10 seconds to complete.")
-                    for i in range(max([int(10 // total_time), 50])):
+                    current_time = datetime.datetime.now().timestamp()
+                    while datetime.datetime.now().timestamp() - current_time < 10:
                         time_start = datetime.datetime.now().timestamp()
                         time_mid = sendMessage("PLTME", timeout=total_time+1)
                         time_end = datetime.datetime.now().timestamp()
