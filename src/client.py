@@ -9,6 +9,7 @@ import atexit
 import signal
 import threading
 import csv
+import zlib
 import statistics as stats
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -17,6 +18,7 @@ changes_to_send = []
 tentative_changes = []
 change_id_counter = 0
 pending_players = []
+current_question = 0
 game_id_num = None
 
 changes_lock = threading.RLock()
@@ -38,17 +40,17 @@ def close():
     global change_id_counter
     with changes_lock:
         for change in tentative_changes:
-            change_id_counter += 1
-            changes_to_send.append({"id": change_id_counter, "data": change})
+            if change[4] != current_question and not any(c["data"] is change for c in changes_to_send):
+                change_id_counter += 1
+                changes_to_send.append({"id": change_id_counter, "data": change})
         del tentative_changes[:]
         pending = bool(changes_to_send)
     if pending:
         flush_changes()
     with changes_lock:
         if changes_to_send:
-            saved = json.load(open("changes.json")) if os.path.exists("changes.json") else []
             with open("changes.json.tmp", "w") as f:
-                json.dump(saved + [{"id": c["id"], "data": c["data"]} for c in changes_to_send if {"id": c["id"], "data": c["data"]} not in saved], f)
+                json.dump([{"id": c["id"], "data": c["data"]} for c in changes_to_send], f)
             os.replace("changes.json.tmp", "changes.json")
             changes_to_send = []
             try:
@@ -57,10 +59,12 @@ def close():
                 pass
     if pending_players:
         saved_players = json.load(open("players.json")) if os.path.exists("players.json") else []
-        with open("players.json", "w") as f:
+        with open("players.json.tmp", "w") as f:
             json.dump(saved_players + [p for p in pending_players if p not in saved_players], f)
+        os.replace("players.json.tmp", "players.json")
     try:
-        sendMessage("CLOSE" + str(game_id_num), repeat=1)
+        if game_id_num is not None:
+            sendMessage("CLOSE" + str(game_id_num), repeat=1)
     except OSError:
         pass
 
@@ -90,6 +94,10 @@ if scriptRunning:
     try:
         IP = config["CONNECTION"]["ip"]
         PORT = int(config["CONNECTION"]["port"])
+        try:
+            IP = socket.gethostbyname(IP)
+        except OSError:
+            pass
         use_rich_text = config["FORMAT"]["use_rich_text"]
     except:
         print("config.ini is incorrectly formatted.")
@@ -154,6 +162,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
     global change_id_counter
     global changes_to_send
     global tentative_changes
+    global current_question
     score = {"a": 0, "b": 0, "points": {}, "roster": {"a": teamA, "b": teamB}}
     tossup = 0
     scoreboard_messages = {"a": [], "b": []}
@@ -165,7 +174,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
     tossup_rosters = {}
     do_revert = False
     game_date_time = sendMessage("PLTME")
-    if game_date_time == "SVRCLS" or game_date_time == "TIMEOUT":
+    if not game_date_time.endswith(("AM", "PM")):
         game_date_time = datetime.datetime.now().strftime("%b %d, %Y, %I:%M:%S.%f %p")
     packet = "pass"
     if tossups > 0:
@@ -173,7 +182,9 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             packet = input(f"Enter {GREEN}packet name{RESET} for tossups (ex: {GREEN}IS #226A P1{RESET}) or pass: ").lower().strip()
             if packet == "pass":
                 break
-            packs_response = sendMessage("PACKS")
+            if not packet:
+                continue
+            packs_response = sendMessage("PACKS" + packet)
             if packs_response in ("TIMEOUT", "SVRCLS", "error"):
                 print(f"Could not reach the server to look up packets. {GREEN}Try again{RESET}.")
                 continue
@@ -190,10 +201,16 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 ids.append(previous_packet["id"])
                 names[previous_packet["id"]] = previous_packet["name"]
                 if previous_packet["id"] == packet:
-                    confirm = input("Packet is " + GREEN + names[packet] + RESET + " and was last played " + str(abs((datetime.datetime.now().date() - datetime.datetime.strptime(previous_packet["date"], "%m/%d/%Y").date()).days)) + " days ago.\nConfirm packet (y / n): ").lower().strip()
+                    try:
+                        last_played = str(abs((datetime.datetime.now().date() - datetime.datetime.strptime(previous_packet["date"], "%m/%d/%Y").date()).days)) + " days ago"
+                    except ValueError:
+                        last_played = "on an unknown date"
+                    confirm = input("Packet is " + GREEN + names[packet] + RESET + " and was last played " + last_played + ".\nConfirm packet (y / n): ").lower().strip()
                     flag = True
                     if confirm == "y":
-                        sendMessage("WRPAC" + json.dumps({"date": datetime.date.today().strftime("%m/%d/%Y"), "id": packet}))
+                        if sendMessage("WRPAC" + json.dumps({"date": datetime.date.today().strftime("%m/%d/%Y"), "id": packet})) != "pass":
+                            print(RED + "Warning" + RESET + ": the server did not confirm the packet. Try again.")
+                            declined = True
                     else:
                         declined = True
                     break
@@ -201,9 +218,11 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
                 continue
             if not flag:
                 packet_name = input(f"Packet is not identified in the database.\nEnter a name for the packet (ex: {GREEN}Inv. Series #226A Packet 1{RESET}) or pass: ").strip()
-                if packet_name.lower() == "pass":
+                if packet_name.lower() == "pass" or not packet_name:
                     continue
-                sendMessage("ADPAC" + json.dumps([packet, packet_name, datetime.date.today().strftime("%m/%d/%Y")]))
+                if sendMessage("ADPAC" + json.dumps([packet, packet_name, datetime.date.today().strftime("%m/%d/%Y")])) != "pass":
+                    print(RED + "Warning" + RESET + ": the server did not confirm the packet. Try again.")
+                    continue
                 names[packet] = packet_name
             break
     if teamAName is None or teamBName is None:
@@ -218,6 +237,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         name = teamAName + " vs. " + teamBName
     while sendMessage("STGME" + json.dumps([game_date_time, {"packet": packet, "player_data": [], "name": name, "a_name": teamAName, "b_name": teamBName}, game_id_num]), repeat=3) != "pass":
         print(RED + "Warning" + RESET + ": the server did not confirm that the game was registered. Retrying, check the connection.")
+        time.sleep(1)
     while tossup < tossups:
         full_name_list = {}
         name_list = {}
@@ -230,6 +250,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         scoreboard_seats = {"a": ["" if i.startswith("!") else name_list[i] for i in teamA], "b": ["" if i.startswith("!") else name_list[i] for i in teamB]}
         threading.Thread(target=sendMessage, args=("STSCR" + str(game_id_num) + "|" + json.dumps(["NEW_PLAYERS", scoreboard_seats]),), daemon=True).start()
         tossup += 1
+        current_question = tossup
         if tossup not in tossup_messages.keys():
             tossup_messages[tossup] = {"a": [entry[:] for entry in scoreboard_messages["a"]], "b": [entry[:] for entry in scoreboard_messages["b"]]}
         if tossup not in tossup_seats.keys():
@@ -622,6 +643,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
             
             threading.Thread(target=writeToDatabase, daemon=True).start()
             sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["SET_HIGHLIGHT", []]))
+            current_question = 0
             do_revert = True
 
         if tossup == tossups:
@@ -774,6 +796,7 @@ def questionTracker(rows, tossups, lightnings, teamA, teamB, teamAName = None, t
         sendMessage("HLSCR" + str(game_id_num) + "|" + json.dumps(score))
         sendMessage("STSCR" + str(game_id_num) + "|" + json.dumps(["HIGHLIGHT", team, [index + 1, 400]]))
     for i in range(lightnings):
+        current_question = i + 1
         full_name_list = {}
         name_list = {}
         all_users = []
@@ -915,17 +938,21 @@ def flush_pending_players():
     global pending_players
     if not pending_players:
         return
-    still_pending = []
-    for player in pending_players:
+    for player in list(pending_players):
         reply = sendMessage("ADPLR" + json.dumps(player), repeat=2)
         if reply.startswith("exists|"):
             print(RED + "Warning" + RESET + ": the username " + player[0] + " already belongs to " + reply[7:] + ", so the stats entered for " + player[1] + " " + player[2] + " are recorded under that player.")
         elif reply != "pass":
-            still_pending.append(player)
-    pending_players = still_pending
+            continue
+        with changes_lock:
+            if player in pending_players:
+                pending_players.remove(player)
 
 def ensure_player(username, first_name, last_name):
     player = [username, first_name, last_name]
+    if username == "pass":
+        print("That username is reserved. Enter a different username.")
+        return "exists"
     reply = sendMessage("ADPLR" + json.dumps(player), repeat=3)
     if reply == "pass":
         return True
@@ -960,7 +987,7 @@ def send_changes_synchronously():
     for change in pending:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            sock.sendto(("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num})).encode(), (IP, PORT))
+            sock.sendto(("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num, "hash": zlib.crc32(json.dumps([change["id"], change["data"], game_id_num]).encode())})).encode(), (IP, PORT))
         except OSError:
             pass
         sock.close()
@@ -1007,9 +1034,18 @@ def writeToDatabase():
             if now - change.get("sent", 0) < ACK_RESEND_INTERVAL:
                 continue
             change["sent"] = now
-            batch.append(("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num})).encode())
+            batch.append(("WRROW" + json.dumps({"id": change["id"], "data": change["data"], "game_id": game_id_num, "hash": zlib.crc32(json.dumps([change["id"], change["data"], game_id_num]).encode())})).encode())
             if len(batch) >= ACK_BATCH_SIZE:
                 break
+        try:
+            if changes_to_send:
+                with open("changes.json.tmp", "w") as f:
+                    json.dump([{"id": c["id"], "data": c["data"]} for c in changes_to_send], f)
+                os.replace("changes.json.tmp", "changes.json")
+            elif os.path.exists("changes.json"):
+                os.remove("changes.json")
+        except OSError:
+            pass
     if not batch and not changes_to_send:
         return
     with send_io_lock:
@@ -1048,6 +1084,8 @@ def writeToDatabase():
         
 
 def sendMessage(message: str, repeat = 3, timeout = 2.0):
+    if message.startswith("STSCR"):
+        message = message.replace("|", ":" + str(time.monotonic_ns()) + "|", 1)
     for i in range(repeat):
         client_socket = None
         try:
@@ -1062,6 +1100,8 @@ def sendMessage(message: str, repeat = 3, timeout = 2.0):
             pass
         except ConnectionResetError:
             return "SVRCLS"
+        except OSError:
+            return "TIMEOUT"
         finally:
             if client_socket:
                 client_socket.close()
@@ -1098,6 +1138,9 @@ def renamePlayer(rows):
         if new_username != target and new_username in all_users:
             print("That username already exists. Choose a different one.")
             continue
+        if new_username == "pass":
+            print("That username is reserved. Choose a different one.")
+            continue
         if not new_username.isalpha():
             print("Usernames can only contain letters.")
             continue
@@ -1124,6 +1167,10 @@ def renamePlayer(rows):
         current["username"] = new_username
         current["first_name"] = first_name
         current["last_name"] = last_name
+        with changes_lock:
+            for change in changes_to_send:
+                if change["data"][0] == target:
+                    change["data"][0] = new_username
         print(BLUE + first_name + " " + last_name + RESET + " has been updated.")
     elif response == "exists":
         print("That username already exists on the server. No changes were made.")
@@ -1137,15 +1184,18 @@ name_rows = []
 fieldnames = ["username", "first_name", "last_name", "lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash", "lightning"]
 
 try:
-    if scriptRunning:
-        data = sendMessage("PLNME")
+    while scriptRunning:
+        data = sendMessage("PLNME" + str(len(name_rows)))
         if data == "SVRCLS" or data == "TIMEOUT":
             print(f"Server is closed. {GREEN}Launch{RESET} the server and try again or {GREEN}change{RESET} the IP.")
             scriptRunning = False
             input(f"Press {GREEN}enter{RESET} to continue.")
         else:
             try:
-                name_rows = json.loads(data)
+                data = json.loads(data)
+                if not data or data[0] in name_rows:
+                    break
+                name_rows += data
             except (json.JSONDecodeError, TypeError):
                 print(f"The server could not read the player list. {GREEN}Try again{RESET} in a moment.")
                 scriptRunning = False
@@ -1156,8 +1206,8 @@ try:
         if input(f"Use {GREEN}session name{RESET} (y or n): ").strip().lower() == "y":
             entered_name = input(f"{GREEN}Name{RESET}: ")
             session_name = "".join(ch for ch in entered_name if ch.isalnum() or ch in " _-").strip()[:32]
-        data = sendMessage("PLNUM" + session_name)
-        if data == "SVRCLS" or data == "TIMEOUT":
+        data = sendMessage("PLNUM" + os.urandom(8).hex() + "|" + session_name)
+        if data == "SVRCLS" or data == "TIMEOUT" or not data.isdigit():
             print(f"Server is closed. {GREEN}Launch{RESET} the server and try again or {GREEN}change{RESET} the IP.")
             scriptRunning = False
             input(f"Press {GREEN}enter{RESET} to continue.")
@@ -1194,17 +1244,15 @@ try:
         for item in migrated:
             if isinstance(item.get("id"), int) and item["id"] > change_id_counter:
                 change_id_counter = item["id"]
-        changes_to_send = migrated
+        with changes_lock:
+            changes_to_send = [c for c in migrated if isinstance(c["data"], list) and len(c["data"]) == 6 and isinstance(c["data"][3], str)]
         # These ids were handed out by an earlier run and belong to that run's
         # game rows, so they are sent the acknowledged way rather than waiting on
         # a PLACK reply that only describes this session.
         if send_changes_synchronously():
             os.remove("changes.json")
         else:
-            print("Some older stats could not be sent to the server. They have been kept and will be sent the next time this client starts.")
-            with open("changes.json", "w") as f:
-                json.dump([{"id": c["id"], "data": c["data"]} for c in changes_to_send], f)
-            changes_to_send = []
+            print("Some older stats could not be sent to the server yet. They will keep being retried while this client runs.")
 
     while scriptRunning:
         print("Select a command: ")
@@ -1265,8 +1313,18 @@ try:
                     name_list[player["username"]] = player["first_name"] + " " + player["last_name"][0] + "."
                 teamAName = None
                 teamBName = None
-                team_a_individual = input(f"{GREEN}Use{RESET} individual stats for team A (y or n): ").lower().strip()
-                team_b_individual = input(f"{GREEN}Use{RESET} individual stats for team B (y or n): ").lower().strip()
+                while True:
+                    team_a_individual = input(f"{GREEN}Use{RESET} individual stats for team A (y or n): ").lower().strip()
+                    if team_a_individual not in ["y", "n"]:
+                        print("That is not a valid input.")
+                    else:
+                        break
+                while True:
+                    team_b_individual = input(f"{GREEN}Use{RESET} individual stats for team B (y or n): ").lower().strip()
+                    if team_b_individual not in ["y", "n"]:
+                        print("That is not a valid input.")
+                    else:
+                        break
                 if team_a_individual == "y" and team_b_individual == "y":
                     choice = input(f"{GREEN}Use{RESET} team names (y or n): ").lower().strip()
                 else:
@@ -1373,11 +1431,11 @@ try:
                 do_check = True
                 for i in range(5):
                     time_start = datetime.datetime.now().timestamp()
-                    time_mid = sendMessage("PLTME", timeout=5)
+                    time_mid = sendMessage("PLTME", repeat=1, timeout=5)
                     time_end = datetime.datetime.now().timestamp()
-                    total_time += time_end - time_start
                     if time_mid == "SVRCLS" or time_mid == "TIMEOUT":
                         continue
+                    total_time += time_end - time_start
                     num_times += 1
                 if num_times > 0:
                     total_time /= num_times
@@ -1387,16 +1445,20 @@ try:
                     current_time = datetime.datetime.now().timestamp()
                     while datetime.datetime.now().timestamp() - current_time < 10:
                         time_start = datetime.datetime.now().timestamp()
-                        time_mid = sendMessage("PLTME", timeout=total_time+1)
+                        time_mid = sendMessage("PLTME", repeat=1, timeout=total_time+1)
                         time_end = datetime.datetime.now().timestamp()
                         if time_mid == "SVRCLS" or time_mid == "TIMEOUT":
                             dropped_packets += 1
+                            time.sleep(0.1)
                             continue
                         times_round_trip.append((time_end - time_start)*1000)
+                    if not times_round_trip:
+                        print("Every packet in the test was lost, indicating a disconnection from the server.")
+                        break
                     percent_packets_dropped = dropped_packets/(len(times_round_trip)+dropped_packets) * 100
                     median_latency = stats.median(times_round_trip)
                     max_latency = max(times_round_trip)
-                    print(f"{GREEN}{len(times_round_trip)}{RESET} packets sucessfully exchanged, {GREEN}{dropped_packets}{RESET} packets lost{f" ({GREEN}{percent_packets_dropped:.2f}%{RESET})" if dropped_packets != 0 else ""}. Total {GREEN}{len(times_round_trip) + dropped_packets}{RESET}.")
+                    print(f"{GREEN}{len(times_round_trip)}{RESET} packets sucessfully exchanged, {GREEN}{dropped_packets}{RESET} packets lost{f' ({GREEN}{percent_packets_dropped:.2f}%{RESET})' if dropped_packets != 0 else ''}. Total {GREEN}{len(times_round_trip) + dropped_packets}{RESET}.")
                     print(f"{GREEN}{median_latency:.2f}ms{RESET} median latency, maximum {GREEN}{max(times_round_trip):.2f}ms{RESET}.")
                     if percent_packets_dropped > 1:
                         print(f"{RED}!WARNING!{RESET} Your average packet loss is high, which can indicate an unstable connection. The program may not work as intended with this connection.")
@@ -1426,7 +1488,8 @@ except OSError:
 except Exception as e:
     close()
     try:
-        sendMessage("CLOSE" + str(game_id_num), repeat=1)
+        if game_id_num is not None:
+            sendMessage("CLOSE" + str(game_id_num), repeat=1)
     except:
         pass
     input(f"An unexpected error occurred: {type(e).__name__}: {e}\nPress enter to continue.")

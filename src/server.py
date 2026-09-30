@@ -5,6 +5,7 @@ import random
 import os
 import time
 import datetime
+import zlib
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
@@ -22,6 +23,7 @@ DB_TIMEOUT = 1.0
 game_list = {}
 
 last_cleared_date = None
+last_pltme = datetime.datetime.min
 
 SCOREBOARD_FPS = 40
 
@@ -128,13 +130,16 @@ def flush_active_games(force=False):
         active_games_last_flush = now
     except Exception as e:
         print(f"Error writing active games: {type(e).__name__}: {e}")
+        active_games_last_flush = now + 5
+        if reconcile:
+            active_games_last_reconcile = now - ACTIVE_GAMES_RECONCILE_INTERVAL + 5
     finally:
         if conn is not None:
             conn.close()
 
 
 def bump_version(item):
-    item["last_active"] = time.time()
+    item["last_active"] = time.monotonic()
     item["scoreboard_state"]["version"] += 1
     mark_active_game(item["game_id"])
 
@@ -160,7 +165,7 @@ clear_active_games()
 
 while True:
     try:
-        current_time = time.time()
+        current_time = time.monotonic()
         to_remove = []
 
         for key, item in game_list.items():
@@ -180,7 +185,7 @@ while True:
         data, addr = server_socket.recvfrom(4096)
     except socket.timeout:
         continue
-    except:
+    except OSError:
         continue
     try:
         data = data.decode()
@@ -199,12 +204,13 @@ while True:
         elif code == "KPALV": #Keep a game alive while the client idles at a menu
             item = game_list.get(data)
             if item is not None:
-                item["last_active"] = time.time()
+                item["last_active"] = time.monotonic()
                 server_socket.sendto(b"pass", addr)
             else:
                 server_socket.sendto(b"error", addr)
         elif code == "PLTME":
-            server_socket.sendto(datetime.datetime.now().strftime("%b %d, %Y, %I:%M:%S.%f %p").encode(), addr)
+            last_pltme = max(datetime.datetime.now(), last_pltme + datetime.timedelta(microseconds=1))
+            server_socket.sendto(last_pltme.strftime("%b %d, %Y, %I:%M:%S.%f %p").encode(), addr)
         elif code == "PLNME":
             conn = None
             try:
@@ -232,7 +238,7 @@ while True:
 
                 rows = [dict(row) for row in result]
                 name_rows = []
-                for i in rows:
+                for i in rows[int(data or 0):int(data or 0) + 30]:
                     name_rows.append({"username": i["username"], "first_name": i["first_name"], "last_name": i["last_name"]})
                 server_socket.sendto(json.dumps(name_rows).encode(), addr)
             except Exception:
@@ -252,7 +258,6 @@ while True:
             if item is None:
                 server_socket.sendto(b"CLOSED", addr)
                 continue
-            item["last_active"] = time.time()
             st = item["scoreboard_state"]
             try:
                 known = int(parts[1])
@@ -271,7 +276,9 @@ while True:
             item = game_list.get(parts[0]) if len(parts) >= 2 else None
             if item is not None:
                 try:
-                    item["scoreboard_state"]["score"] = json.loads(parts[1])
+                    score = json.loads(parts[1])
+                    if isinstance(score, dict) and all(isinstance(score.get(t), (int, float)) and not isinstance(score.get(t), bool) and -10**6 < score.get(t) < 10**6 for t in "ab"):
+                        item["scoreboard_state"]["score"] = score
                 except Exception:
                     pass
                 bump_version(item)
@@ -280,14 +287,17 @@ while True:
                 server_socket.sendto(b"error", addr)
         elif code == "STSCR": #Send seat data to scoreboards
             parts = data.split("|", 1)
-            item = game_list.get(parts[0]) if len(parts) >= 2 else None
+            gid, _, seq = parts[0].partition(":")
+            item = game_list.get(gid) if len(parts) >= 2 else None
             if item is not None:
                 try:
                     payload = json.loads(parts[1])
                     state = item["scoreboard_state"]
+                    seqs = item.setdefault("seqs", {})
                     if payload[0] == "NEW_PLAYERS":
                         for key, names in payload[1].items():
-                            if key in ("a", "b"):
+                            if key in ("a", "b") and isinstance(names, list) and all(isinstance(n, str) for n in names) and int(seq or 0) >= seqs.get(key, 0):
+                                seqs[key] = int(seq or 0)
                                 previous_names = state["seats"][key].copy()
                                 state["seats"][key] = names
                                 for i in range(len(state["seats"][key])):
@@ -297,7 +307,7 @@ while True:
                         team, h = payload[1], payload[2]
                         if (team in ("a", "b") and isinstance(h, list) and len(h) == 2
                                 and isinstance(h[0], int) and not isinstance(h[0], bool)
-                                and isinstance(h[1], (int, float)) and not isinstance(h[1], bool)):
+                                and isinstance(h[1], (int, float)) and not isinstance(h[1], bool) and 0 <= h[1] <= 10**9):
                             state["highlights"][team].append([h[0], time.time() + h[1] / SCOREBOARD_FPS])
                     elif payload[0] == "SET_HIGHLIGHT":
                         state["highlights"]["a"] = []
@@ -306,7 +316,8 @@ while True:
                         def _count(v):
                             return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
                         q = _count(payload[1])
-                        if q is not None:
+                        if q is not None and int(seq or 0) >= seqs.get("question", 0):
+                            seqs["question"] = int(seq or 0)
                             phase = payload[2] if len(payload) > 2 else None
                             state["question"] = [q, phase if phase in ("tossup", "lightning") else "tossup"]
                 except Exception:
@@ -369,17 +380,24 @@ while True:
                 server_socket.sendto(b"error", addr)
 
         elif code == "PLNUM":
+            token, _, data = data.rpartition("|")
+            num = next((gid for gid, item in game_list.items() if token and item.get("token") == token), None)
+            if num is not None:
+                server_socket.sendto(num.encode(), addr)
+                continue
             num = random.randint(100000, 999999)
             while str(num) in game_list:
                 num = random.randint(100000, 999999)
             game_list[str(num)] = {
                 "game_id": str(num),
-                "last_active": time.time(),
+                "last_active": time.monotonic(),
                 "session_name": data,
                 "session_stats": {},
                 "scoreboard_state": empty_scoreboard_state(),
                 "all_games": {},
-                "changes": []
+                "changes": [],
+                "token": token,
+                "date": None
             }
             mark_active_game(num)
             server_socket.sendto(str(num).encode(), addr)
@@ -388,7 +406,7 @@ while True:
             if item is None:
                 server_socket.sendto(b"nogame", addr)
                 continue
-            item["last_active"] = time.time()
+            item["last_active"] = time.monotonic()
             sent_list = {}
             for i in item["all_games"].keys():
                 ack_list = []
@@ -445,6 +463,7 @@ while True:
                 st["version"] = old["version"]
                 item["scoreboard_state"] = st
                 item["session_stats"] = {}
+                item["date"] = None
                 bump_version(item)
                 server_socket.sendto(b"pass", addr)
             else:
@@ -456,7 +475,7 @@ while True:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 try:
-                    cursor.execute("SELECT * FROM packets")
+                    cursor.execute("SELECT * FROM packets WHERE id = ?", (data,))
                     result = cursor.fetchall()
                 except sqlite3.OperationalError as e:
                     if "no such table" not in str(e).lower():
@@ -531,10 +550,12 @@ while True:
                 continue
         elif code == "WRROW":
             payload = json.loads(data)
-            if len(payload["data"]) != 6:
+            if (len(payload["data"]) != 6 or not isinstance(payload["id"], int) or payload["id"] < 1
+                    or not isinstance(payload["game_id"], int) or not 100000 <= payload["game_id"] <= 999999
+                    or payload.get("hash") != zlib.crc32(json.dumps([payload["id"], payload["data"], payload["game_id"]]).encode())):
                 continue
             if str(payload["game_id"]) not in game_list:
-                game_list[str(payload["game_id"])] = {"game_id": str(payload["game_id"]), "last_active": time.time(), "session_name": "", "session_stats": {}, "scoreboard_state": empty_scoreboard_state(), "all_games": {}, "changes": []}
+                game_list[str(payload["game_id"])] = {"game_id": str(payload["game_id"]), "last_active": time.monotonic(), "session_name": "", "session_stats": {}, "scoreboard_state": empty_scoreboard_state(), "all_games": {}, "changes": []}
             if payload["id"] not in [c[0] for c in game_list[str(payload["game_id"])]["changes"]]:
                 game_list[str(payload["game_id"])]["changes"].append([payload["id"], payload["data"]])
         elif code == "COMIT":
@@ -544,37 +565,27 @@ while True:
                 if tracked is None:
                     server_socket.sendto(b"nogame", addr)
                     continue
-                pending, tracked["changes"] = tracked["changes"], []
+                pending = tracked["changes"]
 
                 scalar_fields = ["bonus_ans", "bonus_heard"]
                 json_array_fields = ["lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash"]
 
                 def _is_num(x):
-                    return isinstance(x, (int, float)) and not isinstance(x, bool)
+                    return isinstance(x, int) and not isinstance(x, bool) and x in (0, 1)
 
                 def _is_num_list(x, n):
-                    return isinstance(x, list) and len(x) == n and all(_is_num(v) for v in x)
+                    return isinstance(x, list) and len(x) == n and all(_is_num(v) for v in x) and sum(x) == 1
 
                 by_date = {}
+                rejected = []
                 for entry in pending:
                     add = list(entry[1])
-                    if len(add) != 6:
-                        continue
-                    field = add[1]
-                    value = add[2]
-                    if field in scalar_fields:
-                        if not _is_num(value):
-                            continue
-                    elif field == "lightning":
-                        if not _is_num_list(value, 3):
-                            continue
-                    elif field in json_array_fields:
-                        if not _is_num_list(value, 4):
-                            continue
+                    if (len(add) == 6 and isinstance(add[0], str) and add[0] and isinstance(add[3], str) and isinstance(add[4], int) and add[4] >= 1 and add[5] in ("a", "b")
+                            and ((add[1] in scalar_fields and _is_num(add[2])) or (add[1] == "lightning" and _is_num_list(add[2], 3)) or (add[1] in json_array_fields and _is_num_list(add[2], 4)))):
+                        by_date.setdefault(add[3], []).append((entry[0], add))
                     else:
-                        continue
-                    by_date.setdefault(add[3], []).append((entry[0], add))
-                if not by_date:
+                        rejected.append(entry)
+                if not pending:
                     server_socket.sendto(b"pass", addr)
                     continue
 
@@ -583,6 +594,16 @@ while True:
                 c = conn.cursor()
                 c.execute("SELECT date, data FROM games WHERE date IN (" + ",".join("?" * len(by_date)) + ")", list(by_date))
                 games = {row["date"]: json.loads(row["data"]) for row in c.fetchall()}
+                for date_time in by_date:
+                    if date_time not in games:
+                        games[date_time] = {"packet": "pass", "player_data": [], "name": "Recovered game"}
+                        c.execute("INSERT OR IGNORE INTO games (date, data) VALUES (?, ?)", (date_time, "{}"))
+                if rejected:
+                    print(f"Rejected {len(rejected)} change(s) for game {tracked['game_id']}: {ascii(rejected)}")
+                    c.execute("CREATE TABLE IF NOT EXISTS rejected_changes (game_id TEXT, change TEXT, UNIQUE (game_id, change))")
+                    c.executemany("INSERT OR IGNORE INTO rejected_changes VALUES (?, ?)", [(tracked["game_id"], json.dumps(entry)) for entry in rejected])
+                    for entry in rejected:
+                        tracked["all_games"].setdefault(entry[1][3] if len(entry[1]) > 3 and isinstance(entry[1][3], str) else "", []).append(entry[0])
                 for date_time, arr in games.items():
                     applied = arr.setdefault("applied_ids", [])
                     seen = set(applied)
@@ -597,9 +618,13 @@ while True:
                         seen.add(req_id)
                 c.executemany("UPDATE games SET data = ? WHERE date = ?", [(json.dumps(arr), date_time) for date_time, arr in games.items()])
                 conn.commit()
+                tracked["changes"] = []
 
                 for date_time, arr in games.items():
-                    tracked["all_games"][date_time] = arr["applied_ids"]
+                    tracked["all_games"][date_time] = arr["applied_ids"] + [i for i in tracked["all_games"].get(date_time, []) if i not in arr["applied_ids"]]
+                if "date" not in tracked and len(games) == 1:
+                    tracked["date"] = next(iter(games))
+                    tracked["scoreboard_state"]["names"] = {"a": games[tracked["date"]].get("a_name") or "Team A", "b": games[tracked["date"]].get("b_name") or "Team B"}
                 if tracked.get("date") in games:
                     arr = games[tracked["date"]]
                     name_rows = {}
@@ -641,9 +666,11 @@ while True:
 
                 c.execute("SELECT username FROM players WHERE username = ?", (old_username,))
                 if c.fetchone() is None:
+                    c.execute("SELECT username FROM players WHERE username = ? AND first_name = ? AND last_name = ?", (new_username, first_name, last_name))
+                    renamed = c.fetchone() is not None and new_username != old_username
                     conn.close()
                     conn = None
-                    server_socket.sendto(b"notfound", addr)
+                    server_socket.sendto(b"pass" if renamed else b"notfound", addr)
                     continue
 
                 if new_username != old_username:

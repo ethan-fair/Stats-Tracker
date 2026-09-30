@@ -27,6 +27,10 @@ if running:
     try:
         IP = config["CONNECTION"]["ip"]
         PORT = int(config["CONNECTION"]["port"])
+        try:
+            IP = socket.gethostbyname(IP)
+        except OSError:
+            pass
     except:
         print("The IP or port is incorrectly formatted.")
         running = False
@@ -58,6 +62,7 @@ while running:
             client_socket.close()
 if running:
     state_version = -1
+    last_reply = time.time()
     POLL_INTERVAL = 0.1
 else:
     sys.exit(0)
@@ -120,8 +125,8 @@ class TextBox():
         for index, line in enumerate(self.lines):
             if line.get("seq") is not None and line["seq"] not in incoming and line["progress"] > 0:
                 line["removing"] = True
-                synced.insert(min(index, len(synced)), line)
-        self.lines = synced[:5]
+                synced.append(line)
+        self.lines = synced
 
     def update(self):
         rendered_lines = []
@@ -488,7 +493,7 @@ class SeatTracker():
 
 
 def poll_server():
-    global state_version
+    global state_version, last_reply
     while running:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -497,6 +502,7 @@ def poll_server():
             data, addr = sock.recvfrom(4096)
             sock.close()
             msg = data.decode("utf-8")
+            last_reply = time.time()
             if msg.startswith("SNAP|"):
                 payload = json.loads(msg.split("|", 1)[1])
                 if payload["version"] >= state_version:
@@ -558,7 +564,7 @@ while running:
             else:
                 questionWheel.reset()
         except Exception:
-            pass
+            state_version = -1
 
     if timer > 0:
         timer -= 1
@@ -603,6 +609,8 @@ while running:
         except Exception as e:
             print("Render error (skipping frame for widget):", e)
 
+    if time.time() - last_reply > 5:
+        screen.blit(teamAText.font.render("Connection lost", True, (255, 80, 80)), (10, 690))
     screen_draw = pygame.transform.smoothscale(screen, final_screen.get_size())
 
     final_screen.blit(screen_draw, (0, 0))

@@ -130,12 +130,19 @@ class SingleDateModal(Modal, title="Enter Date"):
 
         dates_to_use = []
         for date in get_dates():
-            date_obj = datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").date()
+            try:
+                date_obj = datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").date()
+            except ValueError:
+                continue
             if date_obj == selected_date:
                 dates_to_use.append(date)
 
         if dates_to_use != []:
-            pdf_buffer = pdf.generate_player_report(self.username, dates_to_use)
+            try:
+                pdf_buffer = pdf.generate_player_report(self.username, dates_to_use)
+            except Exception:
+                await interaction.followup.send("Something went wrong while building the report.", ephemeral=True)
+                return
 
             if pdf_buffer is None:
                 await interaction.followup.send(
@@ -210,12 +217,19 @@ class DateRangeModal(Modal, title="Enter Date Range"):
 
         dates_to_use = []
         for date in get_dates():
-            date_obj = datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").date()
+            try:
+                date_obj = datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").date()
+            except ValueError:
+                continue
             if date_obj >= start_date and date_obj <= end_date:
                 dates_to_use.append(date)
 
         if dates_to_use != []:
-            pdf_buffer = pdf.generate_player_report(self.username, dates_to_use)
+            try:
+                pdf_buffer = pdf.generate_player_report(self.username, dates_to_use)
+            except Exception:
+                await interaction.followup.send("Something went wrong while building the report.", ephemeral=True)
+                return
 
             if pdf_buffer is None:
                 await interaction.followup.send(
@@ -276,7 +290,12 @@ class ReportTypeView(View):
         if choice == "all_time":
             await interaction.response.defer(ephemeral=True)
             if get_dates() != []:
-                pdf_buffer = pdf.generate_player_report(self.username, get_dates())
+                try:
+                    pdf_buffer = pdf.generate_player_report(self.username, get_dates())
+                except Exception:
+                    await interaction.followup.send("Something went wrong while building the report.", ephemeral=True)
+                    self.stop()
+                    return
 
                 if pdf_buffer is None:
                     await interaction.followup.send(
@@ -381,7 +400,7 @@ async def score_command(interaction: discord.Interaction, game: str):
             msg += "\t*Players not named.*\n"
         else:
             for n, i in enumerate(seats):
-                msg += "\t[" + i + "], *Pts: " + str(data["score"].get("points", {}).get((data["score"].get("roster", {}).get(team_key) or [""] * len(seats))[n], 0)) + "*\n"
+                msg += "\t[" + i + "], *Pts: " + str(data["score"].get("points", {}).get(((data["score"].get("roster", {}).get(team_key) or []) + [""] * len(seats))[n], 0)) + "*\n"
 
     await interaction.followup.send(
         msg,
@@ -448,14 +467,20 @@ def get_all_games() -> tuple[list[str], dict[str, str]]:
     games = {}
     dates = []
     for row in rows:
-        parsed = json.loads(row["data"])
+        try:
+            parsed = json.loads(row["data"])
+            datetime.datetime.strptime(row["date"], "%b %d, %Y, %I:%M:%S.%f %p")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
         games[row["date"]] = parsed
         dates.append(row["date"])
     dates = sorted(dates, key=lambda x: datetime.datetime.strptime(x, "%b %d, %Y, %I:%M:%S.%f %p"), reverse=True)
     return_games = {}
     for i in range(len(dates)):
         date = dates[i]
-        label = datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").strftime("%a %b %d, %I:%M %p, %Y") + " - " + games[date]["name"][:60]
+        label = datetime.datetime.strptime(date, "%b %d, %Y, %I:%M:%S.%f %p").strftime("%a %b %d, %I:%M %p, %Y") + " - " + str(games[date].get("name", ""))[:60]
         dates[i] = label
         n = 2
         while dates[i] in return_games:

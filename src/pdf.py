@@ -13,6 +13,10 @@ from reportlab.platypus import (
 )
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from xml.sax.saxutils import escape
 import matplotlib.pyplot as plt
 import matplotlib
 from matplotlib.ticker import MaxNLocator
@@ -23,6 +27,9 @@ matplotlib.use("Agg")
 import os
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+pdfmetrics.registerFont(TTFont("Helvetica", os.path.join(matplotlib.get_data_path(), "fonts", "ttf", "DejaVuSans.ttf")))
+pdfmetrics.registerFont(TTFont("Helvetica-Bold", os.path.join(matplotlib.get_data_path(), "fonts", "ttf", "DejaVuSans-Bold.ttf")))
+matplotlib.rcParams["text.parse_math"] = False
 
 # ---------- palette (matches design) ----------
 INK        = colors.HexColor("#111111")
@@ -46,7 +53,7 @@ def get_names():
     cursor.execute("SELECT username, first_name, last_name FROM players")
     rows = cursor.fetchall()
     conn.close()
-    return {row[0]: row[1] + " " + row[2] for row in rows}
+    return {row[0]: escape(row[1] + " " + row[2]) for row in rows}
 
 
 # ---------- paragraph styles ----------
@@ -63,7 +70,7 @@ def _styles():
         "h2": ParagraphStyle("h2", parent=base, fontName="Helvetica-Bold",
                              fontSize=11, textColor=INK, spaceBefore=6, spaceAfter=4),
         "eyebrow": ParagraphStyle("eb", parent=base, fontName="Helvetica-Bold",
-                                  fontSize=7, textColor=MUTED, leading=9),
+                                  fontSize=7, textColor=MUTED, leading=9, keepWithNext=1),
         "stat": ParagraphStyle("stat", parent=base, fontName="Helvetica-Bold",
                                fontSize=18, leading=20, textColor=INK),
         "rightnum": ParagraphStyle("rn", parent=base, alignment=TA_RIGHT,
@@ -143,7 +150,7 @@ def _fig_to_image(fig, width):
     fig.savefig(buf, format="png", dpi=200, bbox_inches="tight",
                 facecolor="white")
     plt.close(fig); buf.seek(0)
-    w, h = fig.get_size_inches()
+    w, h = ImageReader(buf).getSize(); buf.seek(0)
     return Image(buf, width=width, height=width * h / w)
 
 
@@ -251,7 +258,7 @@ def _player_table(team, styles, width, seats = 1, team_name = None):
             f"<b>{names.get(p, p) if p.isalpha() else 'Combined Score'}</b><br/>",
             styles["base"])
         rows.append([name, str(point_distr["powers"] * 15 + point_distr["tens"] * 10 + point_distr["negs"] * -5),
-                     f"{((point_distr["powers"] * 15 + point_distr["tens"] * 10 + point_distr["negs"] * -5) / point_distr["tuh"]) * 20 if point_distr["tuh"] > 0 else 0:.1f}",
+                     f"{((point_distr['powers'] * 15 + point_distr['tens'] * 10 + point_distr['negs'] * -5) / point_distr['tuh']) * 20 if point_distr['tuh'] > 0 else 0:.1f}",
                      StackedBar(width * 0.4, 10, segs, dividers=True)])
     rows = sorted(rows, key = lambda x: int(x[1]), reverse = True)
     rows.insert(0, ["PLAYER", "PTS", "PP20TUH", "TOSSUP OUTCOME DISTRIBUTION"])
@@ -314,7 +321,7 @@ def _player_table_lightning(team, styles, width, seats = 1):
     for p in players:
         point_distr = distrs[p]
         segs = [(point_distr["tens"], GET),
-                (point_distr["negs"], NEG), (max(0, max_tuh - (point_distr["tens"] + point_distr["negs"])), NEUTRAL)]
+                (point_distr["negs"], NEG), (max(0, point_distr["tuh"] - (point_distr["tens"] + point_distr["negs"])), NEUTRAL)]
         name = Paragraph(
             f"<b>{names.get(p, p) if p.isalpha() else 'Combined Score'}</b><br/>",
             styles["base"])
@@ -358,7 +365,7 @@ def _bonus_table(bonus_data, team_a, team_b, styles, width):
         conv = ans / heard * 100 if heard > 0 else 0
         pp3bh = ans / heard * 30 if heard > 0 else 0
         rows.append([
-            Paragraph(f"<b>{label}</b>", styles["base"]),
+            Paragraph(f"<b>{escape(label)}</b>", styles["base"]),
             str(ans), str(heard),
             f"{conv:.1f}%", f"{pp3bh:.1f}",
             Slider(width * 0.22, 10, conv, _bonus_color(conv)),
@@ -392,7 +399,7 @@ def _lightning_table(lightning_team_data, team_a, team_b, styles, width):
         correct, incorrect, heard = lightning_team_data[team][0], lightning_team_data[team][1], lightning_team_data[team][2]
         conv = correct / heard * 100 if heard > 0 else 0
         rows.append([
-            Paragraph(f"<b>{label}</b>", styles["base"]),
+            Paragraph(f"<b>{escape(label)}</b>", styles["base"]),
             str(correct), str(incorrect), str(heard),
             f"{conv:.1f}%",
             Slider(width * 0.22, 10, conv, _bonus_color(conv)),
@@ -509,6 +516,7 @@ def generate_match_report(date, out_path = None):
     if not game_data:
         return None
 
+    game_data = {"a_name": "Team A", "b_name": "Team B", **game_data}
     game_data["player_data"].sort(key = lambda x: x["question_num"])
 
     categories = ["lit", "history", "science", "fine_arts", "geography", "current_events", "rmpss", "trash"]
@@ -521,7 +529,7 @@ def generate_match_report(date, out_path = None):
 
     for i in game_data["player_data"]:
         if not i["question_num"] in round_data.keys() and i["question_data"][1] != "lightning":
-            round_data[i["question_num"]] = {"a": round_data[i["question_num"] - 1]["a"] if i["question_num"] - 1 in round_data.keys() else 0, "b": round_data[i["question_num"] - 1]["b"] if i["question_num"] - 1 in round_data.keys() else 0}
+            round_data[i["question_num"]] = dict(round_data[max(k for k in round_data if k < i["question_num"])])
         team = i["team"]
         if i["question_data"][1] != "lightning":
             has_tossup = True
@@ -549,7 +557,7 @@ def generate_match_report(date, out_path = None):
         if i["question_data"][1] == "lightning":
             team = i["team"]
             if not i["question_num"] in lightning_data.keys():
-                lightning_data[i["question_num"]] = {"a": lightning_data[i["question_num"] - 1]["a"] if i["question_num"] - 1 in lightning_data.keys() else 0, "b": lightning_data[i["question_num"] - 1]["b"] if i["question_num"] - 1 in lightning_data.keys() else 0}
+                lightning_data[i["question_num"]] = dict(lightning_data[max(k for k in lightning_data if k < i["question_num"])])
             lightning_data[i["question_num"]][team] += 10 * i["question_data"][2][0]
             lightning_data[i["question_num"]][team] -= 10 * i["question_data"][2][1]
             lightning_team_data[team][0] += i["question_data"][2][0]
@@ -592,7 +600,7 @@ def generate_match_report(date, out_path = None):
 
     eyebrow_team_a = ""
     for i in range(len(game_data["a_name"])):
-        eyebrow_team_a = eyebrow_team_a + game_data["a_name"][i].upper() + " "
+        eyebrow_team_a = eyebrow_team_a + escape(game_data["a_name"][i].upper()) + " "
     for i in range(len(eyebrow_team_a)):
         try:
             if eyebrow_team_a[i - 1:i + 2] == "   ":
@@ -601,7 +609,7 @@ def generate_match_report(date, out_path = None):
             pass
     eyebrow_team_b = ""
     for i in range(len(game_data["b_name"])):
-        eyebrow_team_b = eyebrow_team_b + game_data["b_name"][i].upper() + " "
+        eyebrow_team_b = eyebrow_team_b + escape(game_data["b_name"][i].upper()) + " "
     for i in range(len(eyebrow_team_b)):
         try:
             if eyebrow_team_b[i - 1:i + 2] == "   ":
@@ -855,7 +863,7 @@ def generate_player_report(player, games, out_path = None):
         f"P L A Y E R &nbsp; R E P O R T &nbsp;",
         styles["eyebrow"]))
     story.append(Spacer(1, 2))
-    story.append(Paragraph(name, styles["h1"]))
+    story.append(Paragraph(escape(name), styles["h1"]))
     story.append(Spacer(1, 6))
     story.append(HLine(W, INK, 1.2))
     story.append(Spacer(1, 12))
