@@ -11,7 +11,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-IP = "localhost"
+IP = "127.0.0.1"
 PORT = 9999
 server_socket.bind((IP, PORT))
 server_socket.settimeout(1)
@@ -152,7 +152,7 @@ def state_snapshot(st):
         highlights[team] = [[h[0], int((h[1] - now) * SCOREBOARD_FPS)] for h in st["highlights"][team]]
     return {
         "version": st["version"],
-        "score": st["score"],
+        "score": {"a": st["score"]["a"], "b": st["score"]["b"]},
         "seats": st["seats"],
         "question": st["question"],
         "names": st["names"],
@@ -200,7 +200,7 @@ while True:
     # every connected client, so the whole dispatch is guarded.
     try:
         if code == "PROBE":
-            server_socket.sendto(b"pass", addr)
+            server_socket.sendto(b"lists" if data == "LISTS" else b"pass", addr)
         elif code == "KPALV": #Keep a game alive while the client idles at a menu
             item = game_list.get(data)
             if item is not None:
@@ -239,6 +239,8 @@ while True:
                 rows = [dict(row) for row in result]
                 name_rows = []
                 for i in rows[int(data or 0):int(data or 0) + 30]:
+                    if name_rows and len(json.dumps(name_rows + [dict(i)]).encode()) > 548:
+                        break
                     name_rows.append({"username": i["username"], "first_name": i["first_name"], "last_name": i["last_name"]})
                 server_socket.sendto(json.dumps(name_rows).encode(), addr)
             except Exception:
@@ -580,7 +582,7 @@ while True:
                 rejected = []
                 for entry in pending:
                     add = list(entry[1])
-                    if (len(add) == 6 and isinstance(add[0], str) and add[0] and isinstance(add[3], str) and isinstance(add[4], int) and add[4] >= 1 and add[5] in ("a", "b")
+                    if (len(add) == 6 and (isinstance(add[0], str) and add[0] or isinstance(add[0], list) and add[0] and all(isinstance(u, str) and u for u in add[0])) and isinstance(add[3], str) and isinstance(add[4], int) and add[4] >= 1 and add[5] in ("a", "b")
                             and ((add[1] in scalar_fields and _is_num(add[2])) or (add[1] == "lightning" and _is_num_list(add[2], 3)) or (add[1] in json_array_fields and _is_num_list(add[2], 4)))):
                         by_date.setdefault(add[3], []).append((entry[0], add))
                     else:
@@ -613,7 +615,8 @@ while True:
                         team = add.pop(-1)
                         question = add.pop(-1)
                         add.pop(-1)
-                        arr["player_data"].append({"question_data": add, "question_num": question, "team": team})
+                        for user in add[0] if isinstance(add[0], list) else [add[0]]:
+                            arr["player_data"].append({"question_data": [user] + add[1:], "question_num": question, "team": team})
                         applied.append(req_id)
                         seen.add(req_id)
                 c.executemany("UPDATE games SET data = ? WHERE date = ?", [(json.dumps(arr), date_time) for date_time, arr in games.items()])

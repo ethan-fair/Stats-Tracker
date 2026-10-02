@@ -63,7 +63,7 @@ while running:
 if running:
     state_version = -1
     last_reply = time.time()
-    POLL_INTERVAL = 0.1
+    POLL_INTERVAL = 0.5
 else:
     sys.exit(0)
 
